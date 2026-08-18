@@ -8,9 +8,11 @@ Dependencies:
     python3 -m pip install openai cryptography rfc8785
 
 Example:
-    export TOKENEVOL_API_KETOKENEVOL_API_KEYY='...'
+    export TOKENEVOL_API_KEY='...'
     export ATTESTATION_PUBLIC_KEY='BASE64URL_RAW_ED25519_PUBLIC_KEY'
-    python3 verify_response.py --expected-domain api.deepseek.com
+    python3 verify_response.py \
+      --expected-domain api.deepseek.com \
+      --expected-path /v1/chat/completions
 """
 
 from __future__ import annotations
@@ -21,8 +23,10 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -139,14 +143,75 @@ def require_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return normalized
 
 
+def validate_route_and_model_policy(
+    headers: Mapping[str, str], *, expected_path: str, expected_model: str
+) -> None:
+    if headers[HEADER_PATH] != expected_path:
+        raise VerificationError(
+            f"path mismatch: got {headers[HEADER_PATH]!r}, expected {expected_path!r}"
+        )
+    if headers[HEADER_MODEL] != expected_model:
+        raise VerificationError(
+            f"model mismatch: got {headers[HEADER_MODEL]!r}, "
+            f"expected {expected_model!r}"
+        )
+
+
+def consume_nonce(
+    cache_path: str,
+    *,
+    key_id: str,
+    nonce: str,
+    timestamp: int,
+) -> None:
+    """Atomically persist a verified nonce and reject a replay."""
+    path = Path(cache_path).expanduser()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
+        connection = sqlite3.connect(path, timeout=5)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS consumed_nonces (
+                    key_id TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    PRIMARY KEY (key_id, nonce)
+                )
+                """
+            )
+            try:
+                connection.execute(
+                    "INSERT INTO consumed_nonces "
+                    "(key_id, nonce, timestamp) VALUES (?, ?, ?)",
+                    (key_id, nonce, timestamp),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                raise VerificationError(
+                    "attestation nonce has already been consumed"
+                ) from exc
+        finally:
+            connection.close()
+    except VerificationError:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise VerificationError(f"cannot update nonce replay cache: {exc}") from exc
+
+
 def verify_response(
     *,
     headers: Mapping[str, str],
     response_body: Any,
     public_key_text: str,
     expected_domain: str,
+    expected_path: str,
+    expected_model: str,
     prompt: str,
     max_age_seconds: int,
+    nonce_cache_path: str,
 ) -> Any:
     try:
         import rfc8785
@@ -170,6 +235,9 @@ def verify_response(
         raise VerificationError(
             f"domain mismatch: got {h[HEADER_DOMAIN]!r}, expected {expected_domain!r}"
         )
+    validate_route_and_model_policy(
+        h, expected_path=expected_path, expected_model=expected_model
+    )
     if h[HEADER_SIGNED_FIELDS] != EXPECTED_SIGNED_FIELDS:
         raise VerificationError(
             "signed fields do not match local policy: "
@@ -178,7 +246,9 @@ def verify_response(
 
     certificate_sha256 = h[HEADER_CERTIFICATE_SHA256]
     if not re.fullmatch(r"[0-9a-f]{64}", certificate_sha256):
-        raise VerificationError("certificate SHA-256 must be 64 lowercase hex characters")
+        raise VerificationError(
+            "certificate SHA-256 must be 64 lowercase hex characters"
+        )
 
     try:
         timestamp = int(h[HEADER_TIMESTAMP], 10)
@@ -240,6 +310,13 @@ def verify_response(
     except InvalidSignature as exc:
         raise VerificationError("Ed25519 signature verification failed") from exc
 
+    consume_nonce(
+        nonce_cache_path,
+        key_id=h[HEADER_KEY_ID],
+        nonce=h[HEADER_NONCE],
+        timestamp=timestamp,
+    )
+
     return "".join(message["text"] for message in messages)
 
 
@@ -269,7 +346,23 @@ def parse_args() -> argparse.Namespace:
         default="api.deepseek.com",
         help="trusted upstream domain policy (default: %(default)s)",
     )
-    parser.add_argument("--max-age", type=int, default=300, help="maximum header age in seconds")
+    parser.add_argument(
+        "--expected-path",
+        default="/v1/chat/completions",
+        help="trusted upstream request path policy (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-age",
+        type=int,
+        default=300,
+        help="maximum header age in seconds",
+    )
+    parser.add_argument(
+        "--nonce-cache",
+        default=os.getenv("TAP_NONCE_CACHE")
+        or "~/.cache/trusted-ai-proxy/consumed-nonces.sqlite3",
+        help="persistent SQLite replay cache (default: %(default)s)",
+    )
     args = parser.parse_args()
     if not args.api_key:
         parser.error("API key is required; set TOKENEVOL_API_KEY or pass --api-key")
@@ -279,6 +372,14 @@ def parse_args() -> argparse.Namespace:
         )
     if args.max_age <= 0:
         parser.error("--max-age must be greater than zero")
+    if (
+        not args.expected_path.startswith("/")
+        or "?" in args.expected_path
+        or "#" in args.expected_path
+    ):
+        parser.error(
+            "--expected-path must be an absolute URL path without query or fragment"
+        )
     return args
 
 
@@ -307,8 +408,11 @@ def main() -> int:
             response_body=response_body,
             public_key_text=args.public_key,
             expected_domain=args.expected_domain,
+            expected_path=args.expected_path,
+            expected_model=args.model,
             prompt=args.prompt,
             max_age_seconds=args.max_age,
+            nonce_cache_path=args.nonce_cache,
         )
     except VerificationError as exc:
         print(f"INVALID: {exc}", file=sys.stderr)

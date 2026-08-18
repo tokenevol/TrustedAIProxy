@@ -5,10 +5,14 @@ By default, only the verified base64url public key is written to stdout.
 Diagnostics go to stderr, so the script is safe to use in command substitution:
 
     export ATTESTATION_PUBLIC_KEY="$(python3 get_attested_public_key.py \
-      --proof-ref "$PROOF_REF")"
+      --attestation-url https://SERVICE_HOST/.well-known/confidential-attestation \
+      --proof-ref "$PROOF_REF" \
+      --without-postgres)"
 
-Use --output-json when a client needs to cache the verified key together with
-its proof reference, key ID, expiry, and replica instance name.
+The omitted deployment-policy flags must also be supplied with independently
+approved values. Use --output-json when a client needs to cache the verified
+key together with its proof reference, key ID, expiry, and replica instance
+name.
 
 Dependencies:
     python3 -m pip install requests 'PyJWT[crypto]'
@@ -42,7 +46,7 @@ MAX_RESPONSE_BYTES = 1 << 20
 DEFAULT_ATTESTATION_URL = (
     "https://api.example.com/.well-known/confidential-attestation"
 )
-DEFAULT_AUDIENCE = "trusted-ai-proxy/customer/v1"
+DEFAULT_AUDIENCE = "tap/customer/v1"
 DEFAULT_PROJECT_ID = "example-project"
 DEFAULT_PROJECT_NUMBER = "123456789012"
 DEFAULT_ZONE = "us-central1-a"
@@ -55,9 +59,8 @@ DEFAULT_IMAGE_REFERENCE = (
     "ghcr.io/tokenevol/trustedaiproxy@"
     + DEFAULT_IMAGE_DIGEST
 )
-DEFAULT_SECRET_VERSION = (
-    "projects/example-project/secrets/trusted-ai-proxy-pg-dsn/versions/1"
-)
+POSTGRES_SECRET_ENV = "TAP_PG_DSN_SECRET_VERSION"
+LEGACY_POSTGRES_SECRET_ENV = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
 
 
 def expected_container_args(audience: str) -> list[str]:
@@ -334,19 +337,20 @@ def validate_bundle_and_policy(
     # Google omits override claims when no override was supplied. Normalize
     # absence to the corresponding empty JSON value before enforcing policy.
     expect_equal(container.get("cmd_override", []), [], "submods.container.cmd_override")
-    expect_equal(
-        container.get("env"),
-        {
-            "HOSTNAME": instance_name,
-            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
-            "TAP_PG_DSN_SECRET_VERSION": args.secret_version,
-        },
-        "submods.container.env",
-    )
+    expected_env = {
+        "HOSTNAME": instance_name,
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+    }
+    expected_env_override = {}
+    if args.secret_version:
+        secret_env_name = getattr(args, "secret_env_name", POSTGRES_SECRET_ENV)
+        expected_env[secret_env_name] = args.secret_version
+        expected_env_override[secret_env_name] = args.secret_version
+    expect_equal(container.get("env"), expected_env, "submods.container.env")
     expect_equal(
         container.get("env_override", {}),
-        {"TAP_PG_DSN_SECRET_VERSION": args.secret_version},
+        expected_env_override,
         "submods.container.env_override",
     )
     expect_equal(
@@ -406,7 +410,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--service-account", default=DEFAULT_SERVICE_ACCOUNT)
     parser.add_argument("--image-digest", default=DEFAULT_IMAGE_DIGEST)
     parser.add_argument("--image-reference", default=DEFAULT_IMAGE_REFERENCE)
-    parser.add_argument("--secret-version", default=DEFAULT_SECRET_VERSION)
+    postgres = parser.add_mutually_exclusive_group(required=True)
+    postgres.add_argument(
+        "--secret-version",
+        help=(
+            "fixed Secret Manager version containing the PostgreSQL DSN; "
+            "cannot be latest"
+        ),
+    )
+    postgres.add_argument(
+        "--without-postgres",
+        action="store_true",
+        help="expect a single-replica launch without a PostgreSQL secret override",
+    )
+    parser.add_argument(
+        "--secret-env-name",
+        choices=(POSTGRES_SECRET_ENV, LEGACY_POSTGRES_SECRET_ENV),
+        default=POSTGRES_SECRET_ENV,
+        help=(
+            "attested environment variable carrying the secret version "
+            f"(default: {POSTGRES_SECRET_ENV})"
+        ),
+    )
     parser.add_argument("--hwmodel", default="GCP_AMD_SEV")
     parser.add_argument("--support-attribute", default="STABLE")
     parser.add_argument("--timeout", type=float, default=20.0)
@@ -419,6 +444,11 @@ def parse_args() -> argparse.Namespace:
         parser.error("--image-digest must be sha256 followed by 64 lowercase hex digits")
     if args.proof_ref and not re.fullmatch(r"proof-[A-Za-z0-9_-]{24}", args.proof_ref):
         parser.error("--proof-ref is malformed")
+    if args.secret_version and not re.fullmatch(
+        r"projects/[^/]+/secrets/[^/]+/versions/[1-9][0-9]*",
+        args.secret_version,
+    ):
+        parser.error("--secret-version must reference a fixed numbered version")
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero")
     if args.allowed_instance_name:

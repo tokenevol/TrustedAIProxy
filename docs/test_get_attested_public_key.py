@@ -19,7 +19,7 @@ class ValidateBundlePolicyTest(unittest.TestCase):
         )
         challenge = "customer_challenge_123"
         args = types.SimpleNamespace(
-            audience="trusted-ai-proxy/customer/v1",
+            audience="tap/customer/v1",
             proof_ref=f"proof-{suffix}",
             hwmodel="GCP_AMD_SEV",
             service_account="tap@example.iam.gserviceaccount.com",
@@ -34,6 +34,7 @@ class ValidateBundlePolicyTest(unittest.TestCase):
             image_digest="sha256:" + "a" * 64,
             image_reference="example.invalid/image@sha256:" + "a" * 64,
             secret_version="projects/example-project/secrets/postgres/versions/1",
+            secret_env_name="TAP_PG_DSN_SECRET_VERSION",
         )
         expires_at = 2_000_000_000
         bundle = {
@@ -118,6 +119,29 @@ class ValidateBundlePolicyTest(unittest.TestCase):
             verifier.validate_bundle_and_policy(
                 bundle, claims, challenge=challenge, args=args
             )
+
+    def test_accepts_launch_without_postgres(self):
+        bundle, claims, challenge, args = self.fixture()
+        args.secret_version = None
+        container = claims["submods"]["container"]
+        container["env"].pop("TAP_PG_DSN_SECRET_VERSION")
+        container["env_override"] = {}
+        result = verifier.validate_bundle_and_policy(
+            bundle, claims, challenge=challenge, args=args
+        )
+        self.assertEqual(result["proof_ref"], args.proof_ref)
+
+    def test_accepts_deprecated_secret_environment_when_explicit(self):
+        bundle, claims, challenge, args = self.fixture()
+        args.secret_env_name = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
+        container = claims["submods"]["container"]
+        secret_version = container["env"].pop("TAP_PG_DSN_SECRET_VERSION")
+        container["env"][args.secret_env_name] = secret_version
+        container["env_override"] = {args.secret_env_name: secret_version}
+        result = verifier.validate_bundle_and_policy(
+            bundle, claims, challenge=challenge, args=args
+        )
+        self.assertEqual(result["proof_ref"], args.proof_ref)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # TAP 客户验证指南：可信 AI HTTPS 响应证明
 
-文档版本：1.5
+文档版本：1.6
 
 签名协议版本：`trusted-ai-proxy-v1`
 
@@ -120,15 +120,26 @@ curl --fail --silent --show-error \
 
 服务端启用 PostgreSQL 路由后，负载均衡器可以把这个请求交给任意副本。接收方会根据 `proof_ref` 找到在线 owner，由 owner 为这个新 challenge 签发证明，再通过共享数据库返回结果。客户必须确认返回包的 `proof_ref` 精确等于业务响应头中的值，并照常验证 challenge、公钥绑定和 Google token 中的实例策略。未启用 PostgreSQL 时服务端没有跨副本实时路由能力，客户必须命中 owner 或自行保存已经取得的证明包。
 
-仓库提供的验证脚本可以直接执行这一步；多副本名称必须全部列入客户自己的允许策略：
+仓库提供的验证脚本可以执行这一步，但所有部署策略值都必须来自客户预先批准的带外配置，不能使用脚本中的示例占位值。多副本名称必须全部列入客户自己的允许策略：
 
 ```sh
 python3 docs/get_attested_public_key.py \
+  --attestation-url "https://SERVICE_HOST/.well-known/confidential-attestation" \
+  --audience tap/customer/v1 \
   --proof-ref "$PROOF_REF" \
+  --project-id APPROVED_PROJECT_ID \
+  --project-number APPROVED_PROJECT_NUMBER \
+  --zone APPROVED_ZONE \
   --allowed-instance-name tap-01 \
   --allowed-instance-name tap-02 \
+  --service-account APPROVED_SERVICE_ACCOUNT \
+  --image-digest "sha256:APPROVED_IMAGE_DIGEST" \
+  --image-reference "APPROVED_IMAGE_REFERENCE@sha256:APPROVED_IMAGE_DIGEST" \
+  --secret-version "projects/PROJECT_ID/secrets/tap-pg-dsn/versions/1" \
   --output-json
 ```
+
+`--secret-version` 必须是固定编号版本，不能使用 `latest`。如果批准的部署明确不使用 PostgreSQL，应改传 `--without-postgres`。仍处于旧环境变量迁移期的部署可以显式传 `--secret-env-name TRUSTED_PROXY_PG_DSN_SECRET_VERSION`；新部署应使用默认的 `TAP_PG_DSN_SECRET_VERSION`。
 
 启用 PostgreSQL 持久化后，如果客户需要重新取得一个已经签发的 proof，必须同时提交该 proof 的 `proof_ref` 和签发时使用的原始 challenge：
 
@@ -169,6 +180,8 @@ Google 会轮换 JWKS。客户可以缓存公钥，但遇到未知 `kid` 时必�
 - `eat_nonce` 包含客户 challenge 和下面定义的公钥绑定值。
 
 任何一项不符合都必须终止验证。
+
+当前仓库 Dockerfile 会把仓库内的 Demo MITM CA 及私钥复制进镜像。由该 Dockerfile 直接构建的镜像只能用于开发验证，不能作为生产批准镜像。生产构建必须先改为通过受控的 Secret Manager/KMS bootstrap 提供专用 CA，再由客户批准新的不可变 digest。
 
 ### 4.4 验证 Ed25519 公钥绑定
 
@@ -240,6 +253,20 @@ X-Attestation-Proof-Ref: proof-<base64url public-key hash>
 - nonce 必须是在有效窗口内从未消费过的值。
 
 验签成功后再把 nonce 写入短期已消费缓存。
+
+仓库中的 `docs/verify_response.py` 是 OpenAI Chat Completions 单用户文本请求的参考客户端。它会把命令行传入的 model 和允许的上游 path 作为本地策略，并在签名验证成功后把 nonce 原子写入持久化 SQLite 缓存。参考脚本不会自动删除已消费 nonce；生产系统只能在记录已经超过自身允许的最大重放窗口后进行维护清理：
+
+```sh
+python3 docs/verify_response.py \
+  --base-url "https://SERVICE_HOST/v1" \
+  --model APPROVED_MODEL \
+  --prompt "你好" \
+  --expected-domain api.openai.com \
+  --expected-path /v1/chat/completions \
+  --nonce-cache "$HOME/.cache/trusted-ai-proxy/consumed-nonces.sqlite3"
+```
+
+`--base-url` 是客户访问的服务地址，`--expected-domain` 和 `--expected-path` 是 TAP 实际上游的带外允许策略，两者不一定属于同一域名。其他协议或多消息请求需要按照对应提取器重建完整消息数组，不能套用这个单消息示例。
 
 ### 5.3 重建签名载荷
 
