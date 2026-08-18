@@ -1,0 +1,324 @@
+# TAP 客户验证指南：可信 AI HTTPS 响应证明
+
+文档版本：1.5
+
+签名协议版本：`trusted-ai-proxy-v1`
+
+## 1. 客户验证的信任链
+
+本服务运行在 Google Confidential Space 中。客户通过两层验证建立信任：
+
+```text
+Google Cloud Attestation
+        │ 证明硬件、Confidential Space 和容器镜像
+        ▼
+经过证明绑定的 Ed25519 公钥
+        │ 签名具体 HTTPS 交互中归一化的文本语义
+        ▼
+api.openai.com + 上游证书指纹 + request path + model/request messages/response messages
+```
+
+验证全部通过后，可以证明：客户批准的容器镜像运行在符合策略的 Google 机密计算环境中；该镜像通过正常的 HTTPS 证书链和域名校验连接到 `api.openai.com`，并使用经过 Google 证明绑定的 Ed25519 密钥，对所观察到的模型以及请求、响应中的有序纯文本消息进行了签名。
+
+这不表示上游 AI Provider 对这些文本进行了数字签名。最终证明由客户批准的可信 workload 生成，而不是由上游 Provider 直接生成。
+
+## 2. MITM 代理不是客户接入面
+
+MITM 代理及其 CA 只在服务内部使用：
+
+```text
+客户 ──正常 HTTPS──> 客户服务接口
+                         │
+                         ▼
+                   内部业务模块
+                         │ HTTP_PROXY / HTTPS_PROXY
+                         ▼
+                   TAP ──正常 HTTPS──> api.openai.com
+```
+
+因此客户：
+
+- 不需要配置 `HTTP_PROXY` 或 `HTTPS_PROXY`；
+- 不需要下载、安装或信任 MITM CA；
+- 不需要验证 MITM CA 的生命周期；
+- 只需要验证 Google attestation、绑定的 Ed25519 公钥和每条响应的内容签名。
+
+内部业务模块必须把证明 headers 和可重建相同 `llm-conversation-text-v1` 文本语义的请求、响应交付给客户。中间网关可以转换协议外壳，但不能修改已签名的模型、消息角色、消息顺序、消息边界或文本。
+
+## 3. 客户需要预先配置的信息
+
+以下信息必须通过合同、客户门户或其他可信带外渠道提供，不能相信待验证响应中自报的值：
+
+| 项目 | 期望值示例 |
+|---|---|
+| Google attestation issuer | `https://confidentialcomputing.googleapis.com` |
+| Attestation audience | `tap/customer/v1` |
+| 批准的容器镜像 digest | `sha256:...` |
+| 批准的 GCP project ID / project number | 由服务方提供 |
+| 批准的 workload service account | 由服务方提供 |
+| 允许的硬件类型 | 例如 `GCP_AMD_SEV` 或 `GCP_INTEL_TDX` |
+| 目标上游 API 域名 | `api.openai.com` |
+| 响应签名算法 | `ed25519` |
+| 签名协议版本 | `trusted-ai-proxy-v1` |
+| 签名语义 profile | `llm-conversation-text-v1` |
+| 请求 path 与协议提取器 | 由服务方提供，例如 `/v1/chat/completions` 对应 `openai-chat-conversation-v1` |
+
+客户应把这些值固化为本地验证策略。
+
+若客户策略要求硬件级测量根，可以要求 `GCP_INTEL_TDX`。实际可用机型和区域以 [Google Confidential VM supported configurations](https://docs.cloud.google.com/confidential-computing/confidential-vm/docs/supported-configurations) 为准。
+
+## 4. 第一阶段：验证运行环境和内容签名公钥
+
+此阶段通常在首次连接、workload 重启、Ed25519 公钥变化或客户会话建立时执行一次，不需要为每条 OpenAI 响应请求 Google token。
+
+### 4.1 生成一次性 challenge
+
+challenge 必须为 10–74 个 URL-safe ASCII 字符，并且每次不同：
+
+```sh
+NONCE=$(openssl rand -hex 16)
+```
+
+客户必须在本地记录该 challenge，不能接受服务端代为生成的 challenge。
+
+### 4.2 获取证明包
+
+服务方应通过客户服务接口暴露证明端点，例如：
+
+```sh
+curl --fail --silent --show-error \
+  "https://SERVICE_HOST/.well-known/confidential-attestation?nonce=${NONCE}" \
+  -o confidential-attestation.json
+```
+
+证明包结构如下：
+
+```json
+{
+  "token_type": "OIDC",
+  "attestation_token": "GOOGLE_SIGNED_JWT",
+  "audience": "tap/customer/v1",
+  "key_id": "ed25519-<public-key-digest>",
+  "challenge_nonce": "CUSTOMER_CHALLENGE",
+  "proof_ref": "proof-BASE64URL_PUBLIC_KEY_HASH",
+  "expires_at": 1700003600,
+  "attestation_key": {
+    "algorithm": "ed25519",
+    "public_key": "BASE64URL_RAW_PUBLIC_KEY",
+    "binding_nonce": "BASE64URL_SHA256_BINDING"
+  }
+}
+```
+
+客户应按 `proof_ref` 缓存已经验证的 proof，直到 `expires_at` 或公钥轮换；后续业务响应不再重复传输 `attestation_token`。多副本部署时每个副本的公钥和 `proof_ref` 不同。
+
+推荐采用响应优先流程：客户先调用业务接口，从响应头读取 `X-Attestation-Proof-Ref`。如果本地还没有该引用对应的有效证明，则生成新的 challenge，并向同一服务域名请求：
+
+```text
+/.well-known/confidential-attestation?nonce=NEW_CHALLENGE&proof_ref=X_ATTESTATION_PROOF_REF
+```
+
+服务端启用 PostgreSQL 路由后，负载均衡器可以把这个请求交给任意副本。接收方会根据 `proof_ref` 找到在线 owner，由 owner 为这个新 challenge 签发证明，再通过共享数据库返回结果。客户必须确认返回包的 `proof_ref` 精确等于业务响应头中的值，并照常验证 challenge、公钥绑定和 Google token 中的实例策略。未启用 PostgreSQL 时服务端没有跨副本实时路由能力，客户必须命中 owner 或自行保存已经取得的证明包。
+
+仓库提供的验证脚本可以直接执行这一步；多副本名称必须全部列入客户自己的允许策略：
+
+```sh
+python3 docs/get_attested_public_key.py \
+  --proof-ref "$PROOF_REF" \
+  --allowed-instance-name tap-01 \
+  --allowed-instance-name tap-02 \
+  --output-json
+```
+
+启用 PostgreSQL 持久化后，如果客户需要重新取得一个已经签发的 proof，必须同时提交该 proof 的 `proof_ref` 和签发时使用的原始 challenge：
+
+```text
+/.well-known/confidential-attestation?nonce=ORIGINAL_CHALLENGE&proof_ref=PROOF_REF
+```
+
+代理会按 `(proof_ref, challenge_nonce)` 精确查询。数据库中的历史 proof 不会被刷新或覆盖，返回结果可能已经超过 `expires_at`；客户不能把历史记录当作新的实时证明。未知 `proof_ref` 返回 `404`，owner 不在线返回 `410`，路由签发超时或临时失败返回 `503`。持久化也不能为已经销毁且未针对该 challenge 签发过 proof 的副本事后生成证明。
+
+证明包在 Google token 验证完成前完全不可信，不能提前接受其中的 Ed25519 公钥。
+
+### 4.3 验证 Google OIDC token
+
+1. 读取 Google 官方 OIDC discovery：
+
+   ```text
+   https://confidentialcomputing.googleapis.com/.well-known/openid-configuration
+   ```
+
+2. 确认 discovery 的 `issuer` 精确等于 `https://confidentialcomputing.googleapis.com`。
+3. 从 discovery 的 `jwks_uri` 获取 Google 验签公钥。
+4. 根据 JWT header 的 `kid` 选择公钥，并只接受客户策略允许的签名算法。
+5. 验证 JWT 签名后才能读取和使用 claims。
+
+Google 会轮换 JWKS。客户可以缓存公钥，但遇到未知 `kid` 时必须刷新 JWKS，不能关闭签名验证。
+
+至少检查以下 claims：
+
+- `iss`、`aud` 和 token 有效时间符合预配置策略；
+- `swname` 精确等于 `CONFIDENTIAL_SPACE`；
+- `dbgstat` 精确等于 `disabled-since-boot`；
+- `secboot` 为 `true`；
+- `hwmodel` 位于客户允许列表；
+- `submods.container.image_digest` 精确等于客户批准的不可变镜像 digest；
+- `image_reference`、`args`、`cmd_override` 和 `env_override` 符合客户策略；
+- GCP project、实例身份和 `google_service_accounts` 符合客户批准的运营方；
+- Confidential Space support attributes 满足客户策略；
+- `eat_nonce` 包含客户 challenge 和下面定义的公钥绑定值。
+
+任何一项不符合都必须终止验证。
+
+### 4.4 验证 Ed25519 公钥绑定
+
+将 `attestation_key.public_key` 按无 padding 的 base64url 解码，结果必须恰好为 32 字节。然后重新计算：
+
+```text
+key_binding = base64url_no_padding(
+  SHA256(
+    UTF8("attestation-ed25519-public-key-v1") ||
+    0x00 ||
+    raw_32_byte_ed25519_public_key
+  )
+)
+```
+
+必须同时确认：
+
+- `challenge_nonce` 等于客户刚生成的 challenge；
+- `attestation_key.algorithm` 等于 `ed25519`；
+- `attestation_key.binding_nonce` 等于重新计算的 `key_binding`；
+- Google token 的 `eat_nonce` 包含 challenge 和 `key_binding`。
+
+完成以上检查后，客户才可以把该 Ed25519 公钥用于验证业务响应。
+
+## 5. 第二阶段：验证每一条业务响应
+
+客户通过服务方提供的正常 HTTPS API 发起请求，不直接连接内部代理。服务方必须通过可信带外渠道提供每个请求 path 对应的协议提取器。提取器把不同上游格式归一成 `model` 和请求、响应各自的有序 `messages` 数组。每条消息固定为 `{"role":"...","text":"..."}`。当前版本只支持纯文本请求消息；图片、工具调用等无法安全归一化的消息不会生成证明 headers。响应中的非文本 output item 或内容块不属于本 profile，只按顺序提取其中的文本消息。任何失败都不能静默降级为已证明响应。
+
+服务方必须原样透传证明 headers。中间层可以转换请求或响应的协议外壳，但客户重建出的 `model` 和有序 `messages` 必须与代理签名时的归一化结果完全一致。当前版本不签名 SSE、AWS EventStream 等流式响应。
+
+规范化不会把 `developer` 自动等同于 `system`，也不会合并相邻消息。若内部转换层新增了客户不可见的 system prompt，服务方必须向客户提供对应的规范化消息，否则客户无法重建和验证本 profile 的签名载荷。
+
+### 5.1 必需 headers
+
+```text
+X-Attestation-Algorithm: ed25519
+X-Attestation-Profile: llm-conversation-text-v1
+X-Attestation-Key-Id: ed25519-<public-key-digest>
+X-Attestation-Domain: api.openai.com
+X-Attestation-Path: /v1/chat/completions
+X-Attestation-Model: <实际上游模型>
+X-Attestation-Certificate-SHA256: <64位小写hex>
+X-Attestation-Timestamp: <Unix秒>
+X-Attestation-Nonce: <base64url>
+X-Attestation-Signed-Fields: tls_certificate_sha256,domain,request.path,request.body.model,request.body.messages,response.body.messages
+X-Attestation-Signature: <base64url Ed25519 signature>
+X-Attestation-Proof-Ref: proof-<base64url public-key hash>
+```
+
+缺少任何必需 header 都应视为未证明响应，不能静默降级。
+
+验签方应使用 `X-Attestation-Path` 和 `X-Attestation-Model` 重建签名载荷，以兼容内部调用链对路径和模型名的改写。Ed25519 验签成功后，这两个值才能被视为代理实际观察到的 path/model。
+
+`X-Attestation-Key-Id` 只是密钥轮换标签。真正的信任依据是上一阶段经过 Google token 绑定的 Ed25519 公钥，不能只根据 key ID 信任新公钥。
+
+`X-Attestation-Proof-Ref` 只是 proof 缓存索引，不是信任根。客户必须使用该引用找到已验证的 proof，并确认 proof 中的公钥与用于验签的公钥一致。
+
+多副本部署应留空 `-key-id`，让程序根据副本公钥生成唯一 ID；如果人为给所有副本配置同一个 ID，客户无法可靠地区分 proof。
+
+### 5.2 检查固定字段和防重放信息
+
+- algorithm 必须为 `ed25519`；
+- domain 必须精确匹配本地策略中的 `api.openai.com`；
+- path header 必须用来重建签名载荷；路由准入策略应在验签成功后单独执行；
+- model header 存在时必须用它重建签名载荷；模型准入策略应在验签成功后单独执行；
+- profile 必须为本地策略允许的 `llm-conversation-text-v1`；
+- signed-fields 必须精确等于 `llm-conversation-text-v1` 定义的字段及顺序；
+- timestamp 不能晚于当前时间 30 秒以上，也不能超过客户设置的最大有效窗口；
+- nonce 必须是在有效窗口内从未消费过的值。
+
+验签成功后再把 nonce 写入短期已消费缓存。
+
+### 5.3 重建签名载荷
+
+签名载荷使用 [RFC 8785 JSON Canonicalization Scheme（JCS）](https://www.rfc-editor.org/rfc/rfc8785.html) 生成，是无缩进、无尾部换行的 UTF-8 JSON。以下是规范化后的完整示例：
+
+```json
+{"domain":"api.openai.com","key_id":"HEADER_KEY_ID","nonce":"HEADER_NONCE","profile":"llm-conversation-text-v1","request_fields":[{"name":"model","value":"ACTUAL_MODEL"},{"name":"messages","value":[{"role":"system","text":"SYSTEM_TEXT"},{"role":"user","text":"USER_TEXT"}]}],"request_path":"/v1/chat/completions","response_fields":[{"name":"messages","value":[{"role":"assistant","text":"OUTPUT_TEXT"}]}],"timestamp":1700000000,"tls_certificate_sha256":"LOWERCASE_HEX","version":"trusted-ai-proxy-v1"}
+```
+
+其中：
+
+- 验签方先按示例中的字段名和 JSON 类型构建 Claims 对象，再对整个对象执行 RFC 8785 JCS；不依赖编程语言对象或 map 的插入顺序；
+- `request_path` 是不含 query string 的 URL path；
+- `request_fields` 固定为 `model`、`messages`，`response_fields` 固定为 `messages`；这些是稳定语义字段名，不是配置路径表达式；
+- 每条规范化消息保留 `role`、消息顺序和消息边界；同一消息内的多个文本块按顺序拼入一个 `text` 字符串；
+- 字段值保留 JSON 类型。所有对象属性递归按 UTF-16 code unit 排序，数组元素顺序保持不变；
+- 字符串和数字必须按 JCS 规定的 ECMAScript 规则序列化；不能用普通的 `json.dumps(sort_keys=True)` 或类似方法代替 JCS；
+- 输入必须符合 I-JSON：对象不能有重复属性名，字符串必须是有效 Unicode，数字按 IEEE 754 双精度语义处理；整数字面量必须位于 `[-(2^53-1), 2^53-1]`，需要保留更高精度的数值应作为 JSON 字符串传递；
+- domain 使用客户本地策略值，不能直接信任 header；
+- domain 和证书指纹转换为小写；
+- timestamp 是 JSON 整数；
+
+例如 Python 验签程序可以使用符合 RFC 8785 的实现，在重建 `claims` 后生成待验签字节：
+
+```python
+import rfc8785
+
+payload = rfc8785.dumps(claims)
+```
+
+签名不覆盖 HTTP method、query string、状态码和未配置的 JSON 字段。客户不能把未列入 `X-Attestation-Signed-Fields` 的内容当作已证明数据。
+
+### 5.4 执行 Ed25519 验签
+
+1. 将 `X-Attestation-Signature` 按无 padding 的 base64url 解码，结果应为 64 字节；
+2. 使用第一阶段验证并绑定的 32 字节 Ed25519 公钥；
+3. 对重建的 UTF-8 payload 执行 Ed25519 verify；
+4. 所有策略检查和签名检查成功后，才接受配置的响应字段。
+
+## 6. 上游证书指纹的含义
+
+`X-Attestation-Certificate-SHA256` 是可信 workload 与 OpenAI 建立 HTTPS 连接时观察到的上游叶子证书 DER SHA-256，并已包含在 Ed25519 签名中。
+
+它不能单独证明内容来自 OpenAI：OpenAI 或 CDN 可能合法轮换证书，不同区域也可能使用不同叶子证书。客户主要依赖的是批准的代码执行系统信任链校验、SNI/hostname 校验，以及对签名中 `domain` 的本地策略校验。代理本身不限制上游域名。
+
+若客户要求 certificate pinning，应通过可信渠道维护允许的指纹集合，并准备证书轮换和紧急更新流程。
+
+## 7. 必须拒绝的情况
+
+出现以下任一情况时必须拒绝证明或响应：
+
+- Google token 的签名、issuer、audience 或时间校验失败；
+- challenge 不匹配或已经使用；
+- Ed25519 公钥绑定不匹配；
+- 镜像 digest、GCP 项目、服务账号、debug 状态或硬件策略不符合预配置值；
+- Ed25519 公钥变化后未重新完成 Google attestation；
+- 响应缺少必需证明 headers；
+- domain、profile 或 signed-fields 不符合本地策略；
+- timestamp 超窗或 nonce 重复；
+- 请求 path 不符合本地策略，或请求/响应 body 不是有效 JSON；
+- Ed25519 签名验证失败。
+
+不要采用“验证失败时继续使用响应”的降级策略。
+
+## 8. 生命周期
+
+以下事件发生时应重新执行环境和公钥证明：
+
+- workload 重启或 Ed25519 公钥变化；
+- Google attestation token 已过期；
+- 客户会话超过自身设定的证明有效期；
+- 批准的镜像 digest、GCP 项目或硬件策略发生变化；
+- 客户怀疑密钥、网络或运行环境受到影响。
+
+MITM CA 的生成、分发和轮换属于服务方内部运维，不触发客户侧证书更新，也不属于客户验证协议。
+
+## 9. 官方参考资料
+
+- [Google Cloud Attestation](https://docs.cloud.google.com/confidential-computing/docs/attestation)
+- [Confidential Space attestation token claims](https://docs.cloud.google.com/confidential-computing/confidential-space/docs/reference/token-claims)
+- [访问外部资源及验证 attestation token](https://docs.cloud.google.com/confidential-computing/confidential-space/docs/connect-external-resources)
+- [Confidential VM remote attestation overview](https://docs.cloud.google.com/confidential-computing/confidential-vm/docs/attestation-overview)

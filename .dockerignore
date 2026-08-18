@@ -1,0 +1,11 @@
+.git
+.gitignore
+Dockerfile
+README.md
+deploy
+*.pem
+*.key
+proxy-key.pem
+gha-creds-*.json
+!mitm-ca.pem
+!mitm-ca-key.pem

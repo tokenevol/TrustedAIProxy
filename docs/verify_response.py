@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Call an OpenAI-compatible API and verify TAP response headers.
+
+The Ed25519 public key passed to this script must already be trusted (normally
+after validating the corresponding Google Confidential Space attestation).
+
+Dependencies:
+    python3 -m pip install openai cryptography rfc8785
+
+Example:
+    export TOKENEVOL_API_KETOKENEVOL_API_KEYY='...'
+    export ATTESTATION_PUBLIC_KEY='BASE64URL_RAW_ED25519_PUBLIC_KEY'
+    python3 verify_response.py --expected-domain api.deepseek.com
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from typing import Any, Mapping
+
+
+HEADER_ALGORITHM = "x-attestation-algorithm"
+HEADER_PROFILE = "x-attestation-profile"
+HEADER_KEY_ID = "x-attestation-key-id"
+HEADER_DOMAIN = "x-attestation-domain"
+HEADER_PATH = "x-attestation-path"
+HEADER_MODEL = "x-attestation-model"
+HEADER_CERTIFICATE_SHA256 = "x-attestation-certificate-sha256"
+HEADER_TIMESTAMP = "x-attestation-timestamp"
+HEADER_NONCE = "x-attestation-nonce"
+HEADER_SIGNED_FIELDS = "x-attestation-signed-fields"
+HEADER_SIGNATURE = "x-attestation-signature"
+HEADER_PROOF_REF = "x-attestation-proof-ref"
+
+REQUIRED_HEADERS = (
+    HEADER_ALGORITHM,
+    HEADER_PROFILE,
+    HEADER_KEY_ID,
+    HEADER_DOMAIN,
+    HEADER_PATH,
+    HEADER_MODEL,
+    HEADER_CERTIFICATE_SHA256,
+    HEADER_TIMESTAMP,
+    HEADER_NONCE,
+    HEADER_SIGNED_FIELDS,
+    HEADER_SIGNATURE,
+    HEADER_PROOF_REF,
+)
+
+EXPECTED_SIGNED_FIELDS = (
+    "tls_certificate_sha256,domain,request.path,"
+    "request.body.model,request.body.messages,response.body.messages"
+)
+
+
+class VerificationError(Exception):
+    """The response is present but its attestation is invalid."""
+
+
+def base64url_decode(value: str, description: str) -> bytes:
+    if not value or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise VerificationError(f"{description} is not unpadded base64url")
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except ValueError as exc:
+        raise VerificationError(f"cannot decode {description}") from exc
+
+
+def public_key_identifiers(public_key: bytes) -> tuple[str, str]:
+    digest = hashlib.sha256(public_key).digest()
+    suffix = base64.urlsafe_b64encode(digest[:18]).rstrip(b"=").decode("ascii")
+    return f"ed25519-{suffix}", f"proof-{suffix}"
+
+
+def response_messages(response_body: Any) -> list[dict[str, str]]:
+    """Normalize one OpenAI Chat choice to llm-conversation-text-v1."""
+    try:
+        choices = response_body["choices"]
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise VerificationError("response must contain exactly one choice")
+        message = choices[0]["message"]
+        if not isinstance(message, Mapping):
+            raise VerificationError("response message must be an object")
+        if message.get("role") != "assistant":
+            raise VerificationError("response message role must be assistant")
+        content = message.get("content")
+        texts: list[str] = []
+        found_text = False
+        if isinstance(content, str):
+            texts.append(content)
+            found_text = True
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, Mapping):
+                    raise VerificationError("response content block must be an object")
+                block_type = block.get("type", "")
+                if block_type in ("text", "input_text", "output_text", "refusal") or (
+                    block_type == "" and isinstance(block.get("text"), str)
+                ):
+                    value = block.get("text")
+                    if block_type == "refusal" and value is None:
+                        value = block.get("refusal")
+                    if not isinstance(value, str):
+                        raise VerificationError("text response block has no text value")
+                    texts.append(value)
+                    found_text = True
+        elif content is not None:
+            raise VerificationError("response content must be a string or array")
+
+        refusal = message.get("refusal")
+        if refusal is not None:
+            if not isinstance(refusal, str):
+                raise VerificationError("response refusal must be a string")
+            if found_text:
+                raise VerificationError(
+                    "response message contains both content text and refusal text"
+                )
+            texts.append(refusal)
+            found_text = True
+        if not found_text:
+            raise VerificationError("response contains no final text")
+        return [{"role": "assistant", "text": "".join(texts)}]
+    except (KeyError, TypeError) as exc:
+        raise VerificationError("response is not OpenAI-compatible JSON") from exc
+
+
+def require_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    normalized = {str(name).lower(): str(value) for name, value in headers.items()}
+    missing = [name for name in REQUIRED_HEADERS if not normalized.get(name)]
+    if missing:
+        raise VerificationError("missing required headers: " + ", ".join(missing))
+    return normalized
+
+
+def verify_response(
+    *,
+    headers: Mapping[str, str],
+    response_body: Any,
+    public_key_text: str,
+    expected_domain: str,
+    prompt: str,
+    max_age_seconds: int,
+) -> Any:
+    try:
+        import rfc8785
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError as exc:
+        raise RuntimeError(
+            "missing dependency; run: python3 -m pip install openai cryptography rfc8785"
+        ) from exc
+
+    h = require_headers(headers)
+    public_key = base64url_decode(public_key_text, "attestation public key")
+    if len(public_key) != 32:
+        raise VerificationError("attestation public key must decode to 32 bytes")
+
+    if h[HEADER_ALGORITHM] != "ed25519":
+        raise VerificationError(f"unsupported algorithm: {h[HEADER_ALGORITHM]!r}")
+    if h[HEADER_PROFILE] != "llm-conversation-text-v1":
+        raise VerificationError(f"unsupported profile: {h[HEADER_PROFILE]!r}")
+    if h[HEADER_DOMAIN].lower() != expected_domain.lower():
+        raise VerificationError(
+            f"domain mismatch: got {h[HEADER_DOMAIN]!r}, expected {expected_domain!r}"
+        )
+    if h[HEADER_SIGNED_FIELDS] != EXPECTED_SIGNED_FIELDS:
+        raise VerificationError(
+            "signed fields do not match local policy: "
+            f"got {h[HEADER_SIGNED_FIELDS]!r}"
+        )
+
+    certificate_sha256 = h[HEADER_CERTIFICATE_SHA256]
+    if not re.fullmatch(r"[0-9a-f]{64}", certificate_sha256):
+        raise VerificationError("certificate SHA-256 must be 64 lowercase hex characters")
+
+    try:
+        timestamp = int(h[HEADER_TIMESTAMP], 10)
+    except ValueError as exc:
+        raise VerificationError("attestation timestamp is not an integer") from exc
+    age = time.time() - timestamp
+    if age < -30 or age > max_age_seconds:
+        raise VerificationError(
+            f"attestation timestamp is outside the allowed window (age={age:.1f}s)"
+        )
+
+    nonce = base64url_decode(h[HEADER_NONCE], "attestation nonce")
+    if len(nonce) != 16:
+        raise VerificationError("attestation nonce must decode to 16 bytes")
+
+    expected_key_id, expected_proof_ref = public_key_identifiers(public_key)
+    if h[HEADER_KEY_ID] != expected_key_id:
+        raise VerificationError(
+            f"key ID does not match trusted public key: expected {expected_key_id!r}"
+        )
+    if h[HEADER_PROOF_REF] != expected_proof_ref:
+        raise VerificationError(
+            f"proof reference does not match trusted public key: expected {expected_proof_ref!r}"
+        )
+
+    messages = response_messages(response_body)
+    signed_path = h[HEADER_PATH]
+    signed_model = h[HEADER_MODEL]
+    claims = {
+        "version": "trusted-ai-proxy-v1",
+        "profile": "llm-conversation-text-v1",
+        "key_id": h[HEADER_KEY_ID],
+        "tls_certificate_sha256": certificate_sha256,
+        "domain": expected_domain.lower(),
+        "request_path": signed_path,
+        "request_fields": [
+            {"name": "model", "value": signed_model},
+            {
+                "name": "messages",
+                "value": [{"role": "user", "text": prompt}],
+            },
+        ],
+        "response_fields": [
+            {"name": "messages", "value": messages},
+        ],
+        "timestamp": timestamp,
+        "nonce": h[HEADER_NONCE],
+    }
+    try:
+        payload = rfc8785.dumps(claims)
+    except (ValueError, TypeError) as exc:
+        raise VerificationError(f"cannot canonicalize signed payload: {exc}") from exc
+
+    signature = base64url_decode(h[HEADER_SIGNATURE], "attestation signature")
+    if len(signature) != 64:
+        raise VerificationError("attestation signature must decode to 64 bytes")
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, payload)
+    except InvalidSignature as exc:
+        raise VerificationError("Ed25519 signature verification failed") from exc
+
+    return "".join(message["text"] for message in messages)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Call an OpenAI-compatible API and verify TAP headers."
+    )
+    parser.add_argument(
+        "--base-url",
+        default="https://api.example.com/v1",
+        help="OpenAI-compatible API base URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.getenv("TOKENEVOL_API_KEY") or os.getenv("OPENAI_API_KEY"),
+        help="API key; prefer TOKENEVOL_API_KEY or OPENAI_API_KEY",
+    )
+    parser.add_argument(
+        "--public-key",
+        default=os.getenv("ATTESTATION_PUBLIC_KEY"),
+        help="trusted base64url raw Ed25519 key (or ATTESTATION_PUBLIC_KEY)",
+    )
+    parser.add_argument("--model", default="deepseek-v4-flash")
+    parser.add_argument("--prompt", default="你好")
+    parser.add_argument(
+        "--expected-domain",
+        default="api.deepseek.com",
+        help="trusted upstream domain policy (default: %(default)s)",
+    )
+    parser.add_argument("--max-age", type=int, default=300, help="maximum header age in seconds")
+    args = parser.parse_args()
+    if not args.api_key:
+        parser.error("API key is required; set TOKENEVOL_API_KEY or pass --api-key")
+    if not args.public_key:
+        parser.error(
+            "trusted public key is required; set ATTESTATION_PUBLIC_KEY or pass --public-key"
+        )
+    if args.max_age <= 0:
+        parser.error("--max-age must be greater than zero")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print(
+            "ERROR: missing dependency; run: "
+            "python3 -m pip install openai cryptography rfc8785",
+            file=sys.stderr,
+        )
+        return 2
+
+    client = OpenAI(base_url=args.base_url, api_key=args.api_key)
+    try:
+        raw_response = client.chat.completions.with_raw_response.create(
+            model=args.model,
+            messages=[{"role": "user", "content": args.prompt}],
+        )
+        response_body = raw_response.http_response.json()
+        print(raw_response.headers)
+        content = verify_response(
+            headers=raw_response.headers,
+            response_body=response_body,
+            public_key_text=args.public_key,
+            expected_domain=args.expected_domain,
+            prompt=args.prompt,
+            max_age_seconds=args.max_age,
+        )
+    except VerificationError as exc:
+        print(f"INVALID: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"ERROR: request or response parsing failed: {exc}", file=sys.stderr)
+        return 2
+
+    print("✅ VALID: TAP Ed25519 response signature verified")
+    print(json.dumps({"content": content}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

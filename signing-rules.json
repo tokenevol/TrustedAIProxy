@@ -1,0 +1,31 @@
+{
+  "paths": {
+    "/v1/chat/completions": {
+      "extractor": "openai-chat-conversation-v1"
+    },
+    "/chat/completions": {
+      "extractor": "openai-chat-conversation-v1"
+    },
+    "/v1/messages": {
+      "extractor": "anthropic-messages-conversation-v1"
+    },
+    "/anthropic/v1/messages": {
+      "extractor": "anthropic-messages-conversation-v1"
+    },
+    "/openai/deployments/{deployment}/chat/completions": {
+      "extractor": "openai-chat-conversation-v1"
+    },
+    "/v1/responses": {
+      "extractor": "openai-responses-conversation-v1"
+    },
+    "/openai/v1/responses": {
+      "extractor": "openai-responses-conversation-v1"
+    },
+    "/model/{model_id}/invoke": {
+      "extractor": "bedrock-invoke-conversation-v1"
+    },
+    "/model/{model_id}/converse": {
+      "extractor": "bedrock-converse-conversation-v1"
+    }
+  }
+}
