@@ -242,6 +242,6 @@ bash deploy/confidential-space.sh
 
 Copyright 2026 TokenEvol Inc.
 
-本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，仅允许该许可证定义的非商业用途。任何商业用途均须事先取得版权所有者的单独书面授权；商业授权请联系 [business@tokenevol.com](mailto:business@tokenevol.com)。
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，仅允许该许可证定义的非商业用途。任何商业用途均须事先取得版权所有者的单独书面授权；如需商业授权或技术咨询服务，请联系 [business@tokenevol.com](mailto:business@tokenevol.com)。
 
 本项目是 source-available 软件，并非 OSI 定义的开源软件。完整且具有约束力的条款以 [LICENSE](LICENSE) 为准；本节仅为便于理解的摘要，不替代许可证正文。
