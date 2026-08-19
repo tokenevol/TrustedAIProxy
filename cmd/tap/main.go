@@ -204,7 +204,7 @@ func metadataHandler(publicKey ed25519.PublicKey, keyID string, proofs *proofcac
 	mux.HandleFunc("GET /.well-known/confidential-attestation", func(w http.ResponseWriter, request *http.Request) {
 		proofRef := request.URL.Query().Get("proof_ref")
 		challenge := request.URL.Query().Get("nonce")
-		if !validChallenge(challenge) {
+		if attestation.ValidateChallenge(challenge) != nil {
 			http.Error(w, "nonce must be 10-74 URL-safe ASCII characters", http.StatusBadRequest)
 			return
 		}
@@ -249,18 +249,6 @@ func validProofReference(proofRef string) bool {
 	for _, character := range proofRef[len(prefix):] {
 		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
 			(character >= '0' && character <= '9') || character == '-' || character == '_') {
-			return false
-		}
-	}
-	return true
-}
-
-func validChallenge(challenge string) bool {
-	if len(challenge) < 10 || len(challenge) > 74 {
-		return false
-	}
-	for _, character := range challenge {
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_') {
 			return false
 		}
 	}

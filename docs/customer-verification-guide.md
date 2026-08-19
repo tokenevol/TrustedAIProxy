@@ -1,6 +1,6 @@
 # TAP 客户验证指南：可信 AI HTTPS 响应证明
 
-文档版本：1.6
+文档版本：1.7
 
 签名协议版本：`trusted-ai-proxy-v1`
 
@@ -13,12 +13,13 @@ Google Cloud Attestation
         │ 证明硬件、Confidential Space 和容器镜像
         ▼
 经过证明绑定的 Ed25519 公钥
-        │ 签名具体 HTTPS 交互中归一化的文本语义
+        │ 签名具体 HTTPS 交互中声明的 profile 语义
         ▼
-api.openai.com + 上游证书指纹 + request path + model/request messages/response messages
+非流式：api.openai.com + 上游证书指纹 + request path + model/request messages/response messages
+流式：api.openai.com + 上游证书指纹 + request path + model/request messages/stream + response metadata + challenge
 ```
 
-验证全部通过后，可以证明：客户批准的容器镜像运行在符合策略的 Google 机密计算环境中；该镜像通过正常的 HTTPS 证书链和域名校验连接到 `api.openai.com`，并使用经过 Google 证明绑定的 Ed25519 密钥，对所观察到的模型以及请求、响应中的有序纯文本消息进行了签名。
+验证全部通过后，可以证明：客户批准的容器镜像运行在符合策略的 Google 机密计算环境中；该镜像通过正常的 HTTPS 证书链和域名校验连接到 `api.openai.com`，并使用经过 Google 证明绑定的 Ed25519 密钥，对 profile 声明的字段进行了签名。`llm-conversation-text-v1` 覆盖非流式请求和响应文本；`llm-request-upstream-v1` 只覆盖流式请求及上游响应 metadata，不覆盖流式响应 body。
 
 这不表示上游 AI Provider 对这些文本进行了数字签名。最终证明由客户批准的可信 workload 生成，而不是由上游 Provider 直接生成。
 
@@ -41,9 +42,9 @@ MITM 代理及其 CA 只在服务内部使用：
 - 不需要配置 `HTTP_PROXY` 或 `HTTPS_PROXY`；
 - 不需要下载、安装或信任 MITM CA；
 - 不需要验证 MITM CA 的生命周期；
-- 只需要验证 Google attestation、绑定的 Ed25519 公钥和每条响应的内容签名。
+- 只需要验证 Google attestation、绑定的 Ed25519 公钥和每条业务响应所声明 profile 的签名。
 
-内部业务模块必须把证明 headers 和可重建相同 `llm-conversation-text-v1` 文本语义的请求、响应交付给客户。中间网关可以转换协议外壳，但不能修改已签名的模型、消息角色、消息顺序、消息边界或文本。
+内部业务模块必须把证明 headers 和可重建对应 profile 语义的请求、响应交付给客户。中间网关可以转换协议外壳，但不能修改已签名字段。对于 `llm-request-upstream-v1`，中间网关仍然可以修改流式响应 body 而不破坏签名，因此客户必须把该 body 视为未证明内容。
 
 ## 3. 客户需要预先配置的信息
 
@@ -60,7 +61,7 @@ MITM 代理及其 CA 只在服务内部使用：
 | 目标上游 API 域名 | `api.openai.com` |
 | 响应签名算法 | `ed25519` |
 | 签名协议版本 | `trusted-ai-proxy-v1` |
-| 签名语义 profile | `llm-conversation-text-v1` |
+| 签名语义 profile | 非流式 `llm-conversation-text-v1`；流式请求 `llm-request-upstream-v1` |
 | 请求 path 与协议提取器 | 由服务方提供，例如 `/v1/chat/completions` 对应 `openai-chat-conversation-v1` |
 
 客户应把这些值固化为本地验证策略。
@@ -71,7 +72,7 @@ MITM 代理及其 CA 只在服务内部使用：
 
 此阶段通常在首次连接、workload 重启、Ed25519 公钥变化或客户会话建立时执行一次，不需要为每条 OpenAI 响应请求 Google token。
 
-### 4.1 生成一次性 challenge
+### 4.1 生成一次性 Google proof challenge
 
 challenge 必须为 10–74 个 URL-safe ASCII 字符，并且每次不同：
 
@@ -210,7 +211,7 @@ key_binding = base64url_no_padding(
 
 客户通过服务方提供的正常 HTTPS API 发起请求，不直接连接内部代理。服务方必须通过可信带外渠道提供每个请求 path 对应的协议提取器。提取器把不同上游格式归一成 `model` 和请求、响应各自的有序 `messages` 数组。每条消息固定为 `{"role":"...","text":"..."}`。当前版本只支持纯文本请求消息；图片、工具调用等无法安全归一化的消息不会生成证明 headers。响应中的非文本 output item 或内容块不属于本 profile，只按顺序提取其中的文本消息。任何失败都不能静默降级为已证明响应。
 
-服务方必须原样透传证明 headers。中间层可以转换请求或响应的协议外壳，但客户重建出的 `model` 和有序 `messages` 必须与代理签名时的归一化结果完全一致。当前版本不签名 SSE、AWS EventStream 等流式响应。
+服务方必须原样透传证明 headers。中间层可以转换请求或响应的协议外壳，但客户重建出的 profile 字段必须与代理签名时的归一化结果完全一致。当前版本不签名 SSE、AWS EventStream 等流式响应 body；符合 5.5 节条件的 SSE 请求可以获得独立的 request-upstream attestation。
 
 规范化不会把 `developer` 自动等同于 `system`，也不会合并相邻消息。若内部转换层新增了客户不可见的 system prompt，服务方必须向客户提供对应的规范化消息，否则客户无法重建和验证本 profile 的签名载荷。
 
@@ -297,7 +298,7 @@ import rfc8785
 payload = rfc8785.dumps(claims)
 ```
 
-签名不覆盖 HTTP method、query string、状态码和未配置的 JSON 字段。客户不能把未列入 `X-Attestation-Signed-Fields` 的内容当作已证明数据。
+`llm-conversation-text-v1` 不覆盖 HTTP method、query string、状态码和未配置的 JSON 字段。客户不能把未列入 `X-Attestation-Signed-Fields` 的内容当作已证明数据。
 
 ### 5.4 执行 Ed25519 验签
 
@@ -305,6 +306,55 @@ payload = rfc8785.dumps(claims)
 2. 使用第一阶段验证并绑定的 32 字节 Ed25519 公钥；
 3. 对重建的 UTF-8 payload 执行 Ed25519 verify；
 4. 所有策略检查和签名检查成功后，才接受配置的响应字段。
+
+### 5.5 验证流式请求的上游证明
+
+`llm-request-upstream-v1` 是 request-upstream attestation，不是流式响应内容签名。客户必须为每次业务请求生成新的 10–74 位 URL-safe ASCII challenge，并由服务方把它作为内部上游请求 header 传递给 TAP：
+
+```text
+X-Attestation-Challenge: CUSTOMER_UNIQUE_CHALLENGE
+```
+
+TAP 在转发给模型厂商之前移除该 header。缺失、重复或非法 challenge、请求 JSON 的 `stream` 不严格等于布尔值 `true`、请求字段不能完整提取，或者上游 TLS 验证无效时，TAP 必须正常透传但不生成证明 headers。
+
+对于支持的 SSE 路径，客户必须取得并检查以下 headers：
+
+```text
+X-Attestation-Algorithm: ed25519
+X-Attestation-Profile: llm-request-upstream-v1
+X-Attestation-Key-Id: ed25519-<public-key-digest>
+X-Attestation-Domain: api.openai.com
+X-Attestation-Path: /v1/chat/completions
+X-Attestation-Model: <实际上游模型>
+X-Attestation-Certificate-SHA256: <64位小写hex>
+X-Attestation-Timestamp: <Unix秒>
+X-Attestation-Nonce: <base64url>
+X-Attestation-Challenge: CUSTOMER_UNIQUE_CHALLENGE
+X-Attestation-Response-Status: 200
+X-Attestation-Response-Content-Type: text/event-stream
+X-Attestation-Signed-Fields: tls_certificate_sha256,domain,request.path,request.body.model,request.body.messages,request.body.stream,response.status,response.content_type,challenge
+X-Attestation-Signature: <base64url Ed25519 signature>
+X-Attestation-Proof-Ref: proof-<base64url public-key hash>
+```
+
+客户必须确认回显 challenge 与本次请求完全相同，响应状态码和去除参数后的规范化 Content-Type 与实际响应一致，并使用本地允许策略检查 domain、path 和 model。`request_fields` 固定为 `model`、`messages`、`stream`，其中 `stream` 必须是 JSON 布尔值 `true`；`response_fields` 固定为空数组。完整 JCS payload 形状为：
+
+```json
+{"challenge":"CUSTOMER_UNIQUE_CHALLENGE","domain":"api.openai.com","key_id":"HEADER_KEY_ID","nonce":"HEADER_NONCE","profile":"llm-request-upstream-v1","request_fields":[{"name":"model","value":"ACTUAL_MODEL"},{"name":"messages","value":[{"role":"user","text":"PROMPT"}]},{"name":"stream","value":true}],"request_path":"/v1/chat/completions","response_content_type":"text/event-stream","response_fields":[],"response_status":200,"timestamp":1700000000,"tls_certificate_sha256":"LOWERCASE_HEX","version":"trusted-ai-proxy-v1"}
+```
+
+验签成功只证明受信 workload 观察到这些请求字段，并在已验证的上游 TLS 连接上收到相应 response metadata。它不证明任何 SSE event、响应文本、事件顺序或终止状态。服务方能够丢弃真实上游 body 并替换整个流而不导致该 profile 验签失败；客户界面和审计记录必须明确标注“请求及上游已证明，响应 body 未证明”。
+
+本地参考客户端可以在读取 SSE body 前完成该 profile 的验签：
+
+```sh
+go run ./cmd/tap-verify \
+  -stream \
+  -challenge "$(openssl rand -hex 16)" \
+  -public-key 'BASE64URL_PUBLIC_KEY' \
+  -expected-domain api.openai.com \
+  https://api.openai.com/v1/chat/completions
+```
 
 ## 6. 上游证书指纹的含义
 
@@ -319,14 +369,14 @@ payload = rfc8785.dumps(claims)
 出现以下任一情况时必须拒绝证明或响应：
 
 - Google token 的签名、issuer、audience 或时间校验失败；
-- challenge 不匹配或已经使用；
+- Google proof challenge 或业务请求 challenge 不匹配、格式无效或已经使用；
 - Ed25519 公钥绑定不匹配；
 - 镜像 digest、GCP 项目、服务账号、debug 状态或硬件策略不符合预配置值；
 - Ed25519 公钥变化后未重新完成 Google attestation；
 - 响应缺少必需证明 headers；
 - domain、profile 或 signed-fields 不符合本地策略；
 - timestamp 超窗或 nonce 重复；
-- 请求 path 不符合本地策略，或请求/响应 body 不是有效 JSON；
+- 请求 path 不符合本地策略；conversation text profile 的请求/响应 body 不是有效 JSON，或 request-upstream profile 的请求 body 不是有效 JSON；
 - Ed25519 签名验证失败。
 
 不要采用“验证失败时继续使用响应”的降级策略。

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,6 +31,8 @@ func main() {
 	proxyURL := flag.String("proxy", "", "explicit proxy URL; otherwise use HTTP_PROXY/HTTPS_PROXY")
 	caCert := flag.String("ca-cert", "", "MITM CA PEM to trust for this demo client")
 	maxAge := flag.Duration("max-age", 5*time.Minute, "maximum attestation age")
+	stream := flag.Bool("stream", false, "request and verify a request-only streaming attestation")
+	challenge := flag.String("challenge", "", "URL-safe client challenge for -stream (generated when omitted)")
 	flag.Parse()
 	if *publicKeyText == "" || *expectedDomain == "" || flag.NArg() != 1 {
 		log.Fatal("usage: tap-verify -public-key BASE64URL -expected-domain api.example.com [-proxy http://127.0.0.1:8080] [-ca-cert mitm-ca.pem] URL")
@@ -41,20 +45,76 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	requestBody, _ := json.Marshal(map[string]any{
+	requestValues := map[string]any{
 		"model":    *model,
 		"messages": []map[string]string{{"role": "user", "content": *prompt}},
-	})
+	}
+	if *stream {
+		requestValues["stream"] = true
+		if *challenge == "" {
+			*challenge = randomChallenge()
+		}
+		if err := attestation.ValidateChallenge(*challenge); err != nil {
+			log.Fatalf("-challenge: %v", err)
+		}
+	}
+	requestBody, _ := json.Marshal(requestValues)
 	request, err := http.NewRequest(http.MethodPost, flag.Arg(0), bytes.NewReader(requestBody))
 	if err != nil {
 		log.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if *stream {
+		request.Header.Set(attestation.HeaderChallenge, *challenge)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer response.Body.Close()
+	if *stream {
+		signedModel := response.Header.Get(attestation.HeaderModel)
+		if signedModel == "" {
+			log.Fatal("response is missing X-Attestation-Model")
+		}
+		modelField, err := attestation.NewField("model", mustJSON(signedModel))
+		if err != nil {
+			log.Fatal(err)
+		}
+		messagesField, err := attestation.NewField("messages", mustJSON([]attestation.TextMessage{{Role: "user", Text: *prompt}}))
+		if err != nil {
+			log.Fatal(err)
+		}
+		streamField, err := attestation.NewField("stream", []byte("true"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		contentType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		if err != nil {
+			log.Fatalf("parse streaming response Content-Type: %v", err)
+		}
+		observation := attestation.RequestUpstreamObservation{
+			Domain:                 *expectedDomain,
+			CertificateFingerprint: *expectedFingerprint,
+			RequestPath:            request.URL.Path,
+			RequestFields:          []attestation.Field{modelField, messagesField, streamField},
+			Challenge:              *challenge,
+			ResponseStatus:         response.StatusCode,
+			ResponseContentType:    contentType,
+		}
+		if err := attestation.VerifyRequestUpstream(ed25519.PublicKey(publicKey), response.Header, observation, time.Now(), *maxAge); err != nil {
+			fmt.Fprintf(os.Stderr, "INVALID: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("VALID REQUEST ONLY: domain=%s certificate_sha256=%s challenge=%s response_body=unverified\n",
+			response.Header.Get(attestation.HeaderDomain),
+			response.Header.Get(attestation.HeaderCertificateFingerprint),
+			*challenge)
+		if _, err := io.Copy(os.Stdout, response.Body); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Fatal(err)
@@ -94,6 +154,14 @@ func main() {
 		response.Header.Get(attestation.HeaderDomain),
 		response.Header.Get(attestation.HeaderCertificateFingerprint),
 		*fields.Choices[0].Message.Content)
+}
+
+func randomChallenge() string {
+	value := make([]byte, 24)
+	if _, err := rand.Read(value); err != nil {
+		log.Fatalf("generate challenge: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(value)
 }
 
 func mustJSON(value any) []byte {

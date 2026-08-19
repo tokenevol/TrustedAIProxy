@@ -77,6 +77,85 @@ func TestSignAndVerifyExposeSignedModel(t *testing.T) {
 	}
 }
 
+func TestSignAndVerifyRequestUpstream(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	signer := NewSigner(privateKey, "demo-key")
+	signer.now = func() time.Time { return now }
+	requestFields := []Field{
+		mustField(t, "model", `"gpt-test"`),
+		mustField(t, "messages", `[{"role":"user","text":"hello"}]`),
+		mustField(t, "stream", `true`),
+	}
+	observation := RequestUpstreamObservation{
+		Domain:                 "API.Example.com",
+		CertificateFingerprint: "AABBCC",
+		RequestPath:            "/v1/chat/completions",
+		RequestFields:          requestFields,
+		Challenge:              "customer_challenge_123",
+		ResponseStatus:         http.StatusOK,
+		ResponseContentType:    "text/event-stream",
+	}
+	header := make(http.Header)
+	if err := signer.SignRequestUpstream(header, observation); err != nil {
+		t.Fatal(err)
+	}
+	observation.Domain = "api.example.com"
+	observation.CertificateFingerprint = "aabbcc"
+	if err := VerifyRequestUpstream(publicKey, header, observation, now, 5*time.Minute); err != nil {
+		t.Fatalf("verification failed: %v", err)
+	}
+	if got, want := header.Get(HeaderProfile), RequestUpstreamProfile; got != want {
+		t.Fatalf("profile = %q, want %q", got, want)
+	}
+	if got, want := header.Get(HeaderSignedFields), "tls_certificate_sha256,domain,request.path,request.body.model,request.body.messages,request.body.stream,response.status,response.content_type,challenge"; got != want {
+		t.Fatalf("signed fields = %q, want %q", got, want)
+	}
+	if got := header.Get(HeaderChallenge); got != observation.Challenge {
+		t.Fatalf("challenge = %q", got)
+	}
+	if got := header.Get(HeaderResponseStatus); got != "200" {
+		t.Fatalf("response status = %q", got)
+	}
+	if got := header.Get(HeaderResponseContentType); got != "text/event-stream" {
+		t.Fatalf("response content type = %q", got)
+	}
+
+	tamperedChallenge := observation
+	tamperedChallenge.Challenge = "different_challenge_123"
+	if err := VerifyRequestUpstream(publicKey, header, tamperedChallenge, now, 5*time.Minute); err == nil {
+		t.Fatal("expected changed challenge to fail verification")
+	}
+	tamperedStatus := observation
+	tamperedStatus.ResponseStatus = http.StatusAccepted
+	if err := VerifyRequestUpstream(publicKey, header, tamperedStatus, now, 5*time.Minute); err == nil {
+		t.Fatal("expected changed response status to fail verification")
+	}
+	tamperedFields := observation
+	tamperedFields.RequestFields = append([]Field(nil), requestFields...)
+	tamperedFields.RequestFields[2] = mustField(t, "stream", `false`)
+	if err := VerifyRequestUpstream(publicKey, header, tamperedFields, now, 5*time.Minute); err == nil {
+		t.Fatal("expected changed request field to fail verification")
+	}
+}
+
+func TestSignRequestUpstreamRejectsInvalidChallenge(t *testing.T) {
+	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	signer := NewSigner(privateKey, "demo-key")
+	observation := RequestUpstreamObservation{
+		Domain:                 "api.example.com",
+		CertificateFingerprint: "aabbcc",
+		RequestPath:            "/v1/chat/completions",
+		RequestFields:          []Field{mustField(t, "stream", `true`)},
+		Challenge:              "contains spaces",
+		ResponseStatus:         http.StatusOK,
+		ResponseContentType:    "text/event-stream",
+	}
+	if err := signer.SignRequestUpstream(make(http.Header), observation); err == nil {
+		t.Fatal("expected invalid challenge to be rejected")
+	}
+}
+
 func TestSignRejectsNonStringOrUnsafeModelHeader(t *testing.T) {
 	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	signer := NewSigner(privateKey, "demo-key")
@@ -182,6 +261,32 @@ func TestCanonicalPayloadUsesJCSPropertyOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{"domain":"api.openai.com","key_id":"HEADER_KEY_ID","nonce":"HEADER_NONCE","profile":"llm-conversation-text-v1","request_fields":[{"name":"prompt","value":"ACTUAL_PROMPT"}],"request_path":"/v1/demo","response_fields":[{"name":"message","value":"ACTUAL_MESSAGE"}],"timestamp":1700000000,"tls_certificate_sha256":"LOWERCASE_HEX","version":"trusted-ai-proxy-v1"}`
+	if got := string(payload); got != want {
+		t.Fatalf("canonical payload = %s, want %s", got, want)
+	}
+}
+
+func TestCanonicalRequestUpstreamPayloadUsesSeparateProfile(t *testing.T) {
+	claims := Claims{
+		Version:              Version,
+		Profile:              RequestUpstreamProfile,
+		KeyID:                "HEADER_KEY_ID",
+		TLSCertificateSHA256: "LOWERCASE_HEX",
+		Domain:               "api.openai.com",
+		RequestPath:          "/v1/chat/completions",
+		RequestFields:        []Field{{Name: "stream", Value: json.RawMessage(`true`)}},
+		ResponseFields:       []Field{},
+		Timestamp:            1_700_000_000,
+		Nonce:                "HEADER_NONCE",
+		Challenge:            "customer_challenge_123",
+		ResponseStatus:       200,
+		ResponseContentType:  "text/event-stream",
+	}
+	payload, err := CanonicalPayload(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"challenge":"customer_challenge_123","domain":"api.openai.com","key_id":"HEADER_KEY_ID","nonce":"HEADER_NONCE","profile":"llm-request-upstream-v1","request_fields":[{"name":"stream","value":true}],"request_path":"/v1/chat/completions","response_content_type":"text/event-stream","response_fields":[],"response_status":200,"timestamp":1700000000,"tls_certificate_sha256":"LOWERCASE_HEX","version":"trusted-ai-proxy-v1"}`
 	if got := string(payload); got != want {
 		t.Fatalf("canonical payload = %s, want %s", got, want)
 	}

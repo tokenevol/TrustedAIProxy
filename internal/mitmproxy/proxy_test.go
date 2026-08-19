@@ -1,6 +1,7 @@
 package mitmproxy
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -107,6 +108,161 @@ func TestHTTPSMITMSignsNormalizedTextAndUpstreamCertificate(t *testing.T) {
 	}
 }
 
+func TestHTTPSMITMSignsStreamingRequestBeforeForwardingBody(t *testing.T) {
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	upstreamChallenge := make(chan string, 1)
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamChallenge <- r.Header.Get(attestation.HeaderChallenge)
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set(attestation.HeaderChallenge, "forged_upstream_challenge")
+		w.Header().Set(attestation.HeaderSignature, "forged-upstream-signature")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("upstream response writer does not support flush")
+			return
+		}
+		_, _ = w.Write([]byte("data: first\n\n"))
+		flusher.Flush()
+		<-release
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	caDir := t.TempDir()
+	ca, err := LoadOrCreateCA(filepath.Join(caDir, "ca.pem"), filepath.Join(caDir, "ca-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	upstreamRoots := x509.NewCertPool()
+	upstreamRoots.AddCert(upstream.Certificate())
+	outbound := http.DefaultTransport.(*http.Transport).Clone()
+	outbound.Proxy = nil
+	outbound.TLSClientConfig = &tls.Config{RootCAs: upstreamRoots, MinVersion: tls.VersionTLS12}
+	proxy := New(Config{
+		CA:             ca,
+		Signer:         attestation.NewSigner(privateKey, "integration-key"),
+		PathRules:      mustCompilePathRules(t, map[string]PathRule{"/v1/chat/completions": {Extractor: ExtractorOpenAIChatConversation}}),
+		Transport:      outbound,
+		ProofReference: "proof-test",
+	})
+	proxyServer := httptest.NewServer(proxy)
+	defer proxyServer.Close()
+	proxyURL, _ := url.Parse(proxyServer.URL)
+	clientRoots := x509.NewCertPool()
+	clientRoots.AddCert(ca.Leaf)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: clientRoots, MinVersion: tls.VersionTLS12}}}
+
+	requestBody := `{"model":"gpt-test","messages":[{"role":"user","content":"hello"}],"stream":true}`
+	request, _ := http.NewRequest(http.MethodPost, upstream.URL+"/v1/chat/completions", bytes.NewBufferString(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	challenge := "customer_challenge_123"
+	request.Header.Set(attestation.HeaderChallenge, challenge)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if got := <-upstreamChallenge; got != "" {
+		t.Fatalf("challenge leaked to upstream: %q", got)
+	}
+	if got, want := response.Header.Get(attestation.HeaderProfile), attestation.RequestUpstreamProfile; got != want {
+		t.Fatalf("profile = %q, want %q", got, want)
+	}
+	if response.Header.Get(attestation.HeaderSignature) == "forged-upstream-signature" {
+		t.Fatal("upstream-supplied signature was forwarded")
+	}
+	if response.Header.Get(attestation.HeaderProofReference) != "proof-test" {
+		t.Fatalf("proof reference = %q", response.Header.Get(attestation.HeaderProofReference))
+	}
+	fingerprint := sha256.Sum256(upstream.Certificate().Raw)
+	observation := attestation.RequestUpstreamObservation{
+		Domain:                 "127.0.0.1",
+		CertificateFingerprint: hex.EncodeToString(fingerprint[:]),
+		RequestPath:            "/v1/chat/completions",
+		RequestFields: []attestation.Field{
+			mustAttestationField(t, "model", `"gpt-test"`),
+			mustAttestationField(t, "messages", `[{"role":"user","text":"hello"}]`),
+			mustAttestationField(t, "stream", `true`),
+		},
+		Challenge:           challenge,
+		ResponseStatus:      http.StatusOK,
+		ResponseContentType: "text/event-stream",
+	}
+	if err := attestation.VerifyRequestUpstream(publicKey, response.Header, observation, time.Now(), 5*time.Minute); err != nil {
+		t.Fatalf("verify streaming request attestation: %v", err)
+	}
+	reader := bufio.NewReader(response.Body)
+	firstLine, err := reader.ReadString('\n')
+	if err != nil || firstLine != "data: first\n" {
+		t.Fatalf("first streamed line = %q, err = %v", firstLine, err)
+	}
+	blankLine, err := reader.ReadString('\n')
+	if err != nil || blankLine != "\n" {
+		t.Fatalf("streamed event separator = %q, err = %v", blankLine, err)
+	}
+	close(release)
+	rest, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(rest), "data: [DONE]\n\n"; got != want {
+		t.Fatalf("remaining stream = %q, want %q", got, want)
+	}
+}
+
+func TestStreamingResponseWithoutChallengeRemainsUnsigned(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+	caDir := t.TempDir()
+	ca, err := LoadOrCreateCA(filepath.Join(caDir, "ca.pem"), filepath.Join(caDir, "ca-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	upstreamRoots := x509.NewCertPool()
+	upstreamRoots.AddCert(upstream.Certificate())
+	outbound := http.DefaultTransport.(*http.Transport).Clone()
+	outbound.Proxy = nil
+	outbound.TLSClientConfig = &tls.Config{RootCAs: upstreamRoots, MinVersion: tls.VersionTLS12}
+	proxy := New(Config{
+		CA:        ca,
+		Signer:    attestation.NewSigner(privateKey, "integration-key"),
+		PathRules: mustCompilePathRules(t, map[string]PathRule{"/v1/chat/completions": {Extractor: ExtractorOpenAIChatConversation}}),
+		Transport: outbound,
+	})
+	proxyServer := httptest.NewServer(proxy)
+	defer proxyServer.Close()
+	proxyURL, _ := url.Parse(proxyServer.URL)
+	clientRoots := x509.NewCertPool()
+	clientRoots.AddCert(ca.Leaf)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: clientRoots, MinVersion: tls.VersionTLS12}}}
+	request, _ := http.NewRequest(http.MethodPost, upstream.URL+"/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-test","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.Header.Get(attestation.HeaderSignature) != "" {
+		t.Fatal("stream without a client challenge unexpectedly received a signature")
+	}
+	if got, want := string(body), "data: [DONE]\n\n"; got != want {
+		t.Fatalf("stream body = %q, want %q", got, want)
+	}
+}
+
 func TestHTTPSMITMDoesNotSignUnsupportedTextRequest(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -210,8 +366,38 @@ func TestClearAttestationHeadersRemovesSemanticHeaders(t *testing.T) {
 	header.Set(attestation.HeaderRequestPath, "/untrusted")
 	header.Set(attestation.HeaderModel, "untrusted-model")
 	header.Set(attestation.HeaderProfile, "untrusted-profile")
+	header.Set(attestation.HeaderChallenge, "untrusted-challenge")
+	header.Set(attestation.HeaderResponseStatus, "200")
 	clearAttestationHeaders(header)
-	if header.Get(attestation.HeaderRequestPath) != "" || header.Get(attestation.HeaderModel) != "" || header.Get(attestation.HeaderProfile) != "" {
+	if header.Get(attestation.HeaderRequestPath) != "" || header.Get(attestation.HeaderModel) != "" || header.Get(attestation.HeaderProfile) != "" || header.Get(attestation.HeaderChallenge) != "" || header.Get(attestation.HeaderResponseStatus) != "" {
 		t.Fatalf("attestation semantic headers were not cleared: %v", header)
+	}
+}
+
+func TestTakeChallengeStripsInternalHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+		valid  bool
+	}{
+		{name: "valid", values: []string{"customer_challenge_123"}, valid: true},
+		{name: "missing"},
+		{name: "invalid", values: []string{"contains spaces"}},
+		{name: "duplicate", values: []string{"customer_challenge_123", "another_challenge_123"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header := make(http.Header)
+			for _, value := range test.values {
+				header.Add(attestation.HeaderChallenge, value)
+			}
+			_, valid := takeChallenge(header)
+			if valid != test.valid {
+				t.Fatalf("valid = %v, want %v", valid, test.valid)
+			}
+			if header.Get(attestation.HeaderChallenge) != "" {
+				t.Fatal("challenge header was not stripped")
+			}
+		})
 	}
 }

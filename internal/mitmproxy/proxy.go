@@ -34,10 +34,12 @@ type PathRule struct {
 }
 
 type requestState struct {
-	domain        string
-	path          string
-	requestFields []attestation.Field
-	extractor     textExtractor
+	domain                 string
+	path                   string
+	requestFields          []attestation.Field
+	streamingRequestFields []attestation.Field
+	challenge              string
+	extractor              textExtractor
 }
 
 func New(config Config) *goproxy.ProxyHttpServer {
@@ -69,6 +71,7 @@ func New(config Config) *goproxy.ProxyHttpServer {
 	proxy.OnRequest().DoFunc(func(request *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		domain := strings.ToLower(request.URL.Hostname())
 		ctx.Proxy.Logger.Printf("[%03d] FORWARD: method=%s target=%s", ctx.Session&0xffff, request.Method, forwardingTarget(request))
+		challenge, validChallenge := takeChallenge(request.Header)
 		rule, ok := config.PathRules.Match(request.URL.Path)
 		if !ok || !isJSON(request.Header.Get("Content-Type")) || request.Body == nil {
 			return request, nil
@@ -88,7 +91,15 @@ func New(config Config) *goproxy.ProxyHttpServer {
 			ctx.Warnf("cannot extract signed request conversation for %s%s: %v", domain, request.URL.Path, err)
 			return request, nil
 		}
-		ctx.UserData = requestState{domain: domain, path: request.URL.Path, requestFields: fields, extractor: extractor}
+		state := requestState{domain: domain, path: request.URL.Path, requestFields: fields, extractor: extractor}
+		if validChallenge {
+			streamingFields, err := appendStreamingRequestField(body, fields)
+			if err == nil {
+				state.streamingRequestFields = streamingFields
+				state.challenge = challenge
+			}
+		}
+		ctx.UserData = state
 		return request, nil
 	})
 
@@ -97,8 +108,33 @@ func New(config Config) *goproxy.ProxyHttpServer {
 			return response
 		}
 		clearAttestationHeaders(response.Header)
+		clearAttestationHeaders(response.Trailer)
 		state, ok := ctx.UserData.(requestState)
-		if !ok || !isJSON(response.Header.Get("Content-Type")) || response.Body == nil || response.TLS == nil || len(response.TLS.PeerCertificates) == 0 || len(response.TLS.VerifiedChains) == 0 {
+		if !ok || response.Body == nil || response.TLS == nil || len(response.TLS.PeerCertificates) == 0 || len(response.TLS.VerifiedChains) == 0 {
+			return response
+		}
+		fingerprint := sha256.Sum256(response.TLS.PeerCertificates[0].Raw)
+		if contentType, streaming := streamingContentType(response.Header.Get("Content-Type")); streaming {
+			if state.challenge == "" || len(state.streamingRequestFields) == 0 {
+				return response
+			}
+			observation := attestation.RequestUpstreamObservation{
+				Domain:                 state.domain,
+				CertificateFingerprint: hex.EncodeToString(fingerprint[:]),
+				RequestPath:            state.path,
+				RequestFields:          state.streamingRequestFields,
+				Challenge:              state.challenge,
+				ResponseStatus:         response.StatusCode,
+				ResponseContentType:    contentType,
+			}
+			if err := config.Signer.SignRequestUpstream(response.Header, observation); err != nil {
+				ctx.Warnf("sign streaming request for %s: %v", state.domain, err)
+			} else if config.ProofReference != "" {
+				response.Header.Set(attestation.HeaderProofReference, config.ProofReference)
+			}
+			return response
+		}
+		if !isJSON(response.Header.Get("Content-Type")) {
 			return response
 		}
 		body, complete, err := readAndRestore(&response.Body, config.MaxJSONBytes)
@@ -111,7 +147,6 @@ func New(config Config) *goproxy.ProxyHttpServer {
 			ctx.Warnf("cannot extract signed response conversation for %s%s: %v", state.domain, state.path, err)
 			return response
 		}
-		fingerprint := sha256.Sum256(response.TLS.PeerCertificates[0].Raw)
 		if err := config.Signer.Sign(response.Header, state.domain, hex.EncodeToString(fingerprint[:]), state.path, state.requestFields, fields); err != nil {
 			ctx.Warnf("sign response for %s: %v", state.domain, err)
 		} else if config.ProofReference != "" {
@@ -136,6 +171,28 @@ func forwardingTarget(request *http.Request) string {
 func isJSON(contentType string) bool {
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	return err == nil && (mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"))
+}
+
+func streamingContentType(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", false
+	}
+	switch mediaType {
+	case "text/event-stream", "application/vnd.amazon.eventstream":
+		return mediaType, true
+	default:
+		return "", false
+	}
+}
+
+func takeChallenge(header http.Header) (string, bool) {
+	values := header.Values(attestation.HeaderChallenge)
+	header.Del(attestation.HeaderChallenge)
+	if len(values) != 1 || attestation.ValidateChallenge(values[0]) != nil {
+		return "", false
+	}
+	return values[0], true
 }
 
 type restoredReadCloser struct {
@@ -177,6 +234,9 @@ func clearAttestationHeaders(header http.Header) {
 		attestation.HeaderSignedFields,
 		attestation.HeaderSignature,
 		attestation.HeaderProofReference,
+		attestation.HeaderChallenge,
+		attestation.HeaderResponseStatus,
+		attestation.HeaderResponseContentType,
 	} {
 		header.Del(name)
 	}

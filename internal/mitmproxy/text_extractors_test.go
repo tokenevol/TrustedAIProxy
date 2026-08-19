@@ -29,6 +29,62 @@ func TestOpenAIChatConversationExtractor(t *testing.T) {
 	assertResponseMessages(t, responseFields, `[{"role":"assistant","text":"world"}]`)
 }
 
+func TestStreamingRequestFieldsNormalizeSupportedJSONProtocols(t *testing.T) {
+	tests := []struct {
+		name, extractor, path, body string
+	}{
+		{
+			name:      "OpenAI Chat",
+			extractor: ExtractorOpenAIChatConversation,
+			path:      "/v1/chat/completions",
+			body:      `{"model":"shared-model","messages":[{"role":"user","content":"hello"}],"stream":true}`,
+		},
+		{
+			name:      "OpenAI Responses",
+			extractor: ExtractorOpenAIResponsesConversation,
+			path:      "/v1/responses",
+			body:      `{"model":"shared-model","input":"hello","stream":true}`,
+		},
+		{
+			name:      "Anthropic Messages",
+			extractor: ExtractorAnthropicMessagesConversation,
+			path:      "/v1/messages",
+			body:      `{"model":"shared-model","messages":[{"role":"user","content":"hello"}],"stream":true}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			extractor := mustTextExtractor(t, test.extractor)
+			fields, err := extractor.ExtractRequest([]byte(test.body), test.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields, err = appendStreamingRequestField([]byte(test.body), fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fields) != 3 || fields[2].Name != "stream" || string(fields[2].Value) != "true" {
+				t.Fatalf("unexpected streaming request fields: %#v", fields)
+			}
+		})
+	}
+}
+
+func TestStreamingRequestFieldsRequireTrueBoolean(t *testing.T) {
+	base := []attestation.Field{mustFieldForExtractor(t, "model", `"gpt-test"`)}
+	for name, body := range map[string]string{
+		"missing": `{}`,
+		"false":   `{"stream":false}`,
+		"string":  `{"stream":"true"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := appendStreamingRequestField([]byte(body), base); err == nil {
+				t.Fatal("expected streaming request to be rejected")
+			}
+		})
+	}
+}
+
 func TestConversationExtractorsNormalizeEquivalentProtocols(t *testing.T) {
 	chat := mustTextExtractor(t, ExtractorOpenAIChatConversation)
 	chatFields, err := chat.ExtractRequest([]byte(`{
@@ -219,6 +275,15 @@ func mustTextExtractor(t *testing.T, name string) textExtractor {
 		t.Fatalf("extractor %q not found", name)
 	}
 	return extractor
+}
+
+func mustFieldForExtractor(t *testing.T, name, value string) attestation.Field {
+	t.Helper()
+	field, err := attestation.NewField(name, []byte(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return field
 }
 
 func assertConversationFields(t *testing.T, fields []attestation.Field, model, messages string) {

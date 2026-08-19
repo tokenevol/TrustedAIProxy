@@ -78,6 +78,7 @@ type requestEnvelope struct {
 	Input        json.RawMessage   `json:"input"`
 	System       json.RawMessage   `json:"system"`
 	Instructions json.RawMessage   `json:"instructions"`
+	Stream       json.RawMessage   `json:"stream"`
 }
 
 type messageEnvelope struct {
@@ -109,6 +110,23 @@ func extractOpenAIChatRequestConversation(body []byte, requestPath string) ([]at
 		return nil, err
 	}
 	return conversationRequestFields(model, messages)
+}
+
+func appendStreamingRequestField(body []byte, fields []attestation.Field) ([]attestation.Field, error) {
+	var request requestEnvelope
+	if err := decodeJSONObject(body, &request); err != nil {
+		return nil, err
+	}
+	var stream bool
+	if len(bytes.TrimSpace(request.Stream)) == 0 || json.Unmarshal(request.Stream, &stream) != nil || !stream {
+		return nil, errors.New("request stream must be true")
+	}
+	streamField, err := newJSONField("stream", true)
+	if err != nil {
+		return nil, err
+	}
+	result := append([]attestation.Field(nil), fields...)
+	return append(result, streamField), nil
 }
 
 func extractMessagesRequestConversation(body []byte, requestPath string) ([]attestation.Field, error) {

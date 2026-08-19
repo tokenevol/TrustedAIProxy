@@ -31,9 +31,13 @@ const (
 	HeaderSignedFields           = "X-Attestation-Signed-Fields"
 	HeaderSignature              = "X-Attestation-Signature"
 	HeaderProofReference         = "X-Attestation-Proof-Ref"
+	HeaderChallenge              = "X-Attestation-Challenge"
+	HeaderResponseStatus         = "X-Attestation-Response-Status"
+	HeaderResponseContentType    = "X-Attestation-Response-Content-Type"
 	Algorithm                    = "ed25519"
 	Version                      = "trusted-ai-proxy-v1"
 	Profile                      = "llm-conversation-text-v1"
+	RequestUpstreamProfile       = "llm-request-upstream-v1"
 	maxIJSONSafeInteger          = int64(1<<53 - 1)
 )
 
@@ -87,6 +91,22 @@ type Claims struct {
 	ResponseFields       []Field `json:"response_fields"`
 	Timestamp            int64   `json:"timestamp"`
 	Nonce                string  `json:"nonce"`
+	Challenge            string  `json:"challenge,omitempty"`
+	ResponseStatus       int     `json:"response_status,omitempty"`
+	ResponseContentType  string  `json:"response_content_type,omitempty"`
+}
+
+// RequestUpstreamObservation is the request and upstream response metadata
+// covered by llm-request-upstream-v1. It deliberately contains no response
+// body fields: callers must treat the streamed response body as unverified.
+type RequestUpstreamObservation struct {
+	Domain                 string
+	CertificateFingerprint string
+	RequestPath            string
+	RequestFields          []Field
+	Challenge              string
+	ResponseStatus         int
+	ResponseContentType    string
 }
 
 type Signer struct {
@@ -100,7 +120,7 @@ func NewSigner(privateKey ed25519.PrivateKey, keyID string) *Signer {
 }
 
 func (s *Signer) Sign(header http.Header, domain, certificateFingerprint, requestPath string, requestFields, responseFields []Field) error {
-	if err := validateFields(requestFields, responseFields); err != nil {
+	if err := validateFields(requestFields, responseFields, true); err != nil {
 		return err
 	}
 	if !validHeaderValue(requestPath) {
@@ -146,6 +166,76 @@ func (s *Signer) Sign(header http.Header, domain, certificateFingerprint, reques
 	header.Set(HeaderNonce, claims.Nonce)
 	header.Set(HeaderSignedFields, signedFields(requestFields, responseFields))
 	header.Set(HeaderSignature, base64.RawURLEncoding.EncodeToString(signature))
+	header.Del(HeaderChallenge)
+	header.Del(HeaderResponseStatus)
+	header.Del(HeaderResponseContentType)
+	return nil
+}
+
+// SignRequestUpstream signs the normalized request and the verified upstream
+// TLS/response metadata before a streaming response body is forwarded.
+func (s *Signer) SignRequestUpstream(header http.Header, observation RequestUpstreamObservation) error {
+	if err := validateFields(observation.RequestFields, nil, false); err != nil {
+		return err
+	}
+	if err := ValidateChallenge(observation.Challenge); err != nil {
+		return err
+	}
+	if observation.ResponseStatus < 100 || observation.ResponseStatus > 599 {
+		return errors.New("response status must be between 100 and 599")
+	}
+	if !validHeaderValue(observation.ResponseContentType) || observation.ResponseContentType == "" {
+		return errors.New("response content type is invalid")
+	}
+	if !validHeaderValue(observation.RequestPath) {
+		return errors.New("request path contains characters that are unsafe in an HTTP header")
+	}
+	model, hasModel, err := modelHeader(observation.RequestFields)
+	if err != nil {
+		return err
+	}
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return fmt.Errorf("create nonce: %w", err)
+	}
+	claims := Claims{
+		Version:              Version,
+		Profile:              RequestUpstreamProfile,
+		KeyID:                s.keyID,
+		TLSCertificateSHA256: strings.ToLower(observation.CertificateFingerprint),
+		Domain:               strings.ToLower(observation.Domain),
+		RequestPath:          observation.RequestPath,
+		RequestFields:        observation.RequestFields,
+		ResponseFields:       []Field{},
+		Timestamp:            s.now().UTC().Unix(),
+		Nonce:                base64.RawURLEncoding.EncodeToString(nonceBytes),
+		Challenge:            observation.Challenge,
+		ResponseStatus:       observation.ResponseStatus,
+		ResponseContentType:  observation.ResponseContentType,
+	}
+	payload, err := CanonicalPayload(claims)
+	if err != nil {
+		return err
+	}
+	signature := ed25519.Sign(s.privateKey, payload)
+
+	header.Set(HeaderAlgorithm, Algorithm)
+	header.Set(HeaderProfile, claims.Profile)
+	header.Set(HeaderKeyID, claims.KeyID)
+	header.Set(HeaderDomain, claims.Domain)
+	header.Set(HeaderRequestPath, claims.RequestPath)
+	header.Del(HeaderModel)
+	if hasModel {
+		header.Set(HeaderModel, model)
+	}
+	header.Set(HeaderCertificateFingerprint, claims.TLSCertificateSHA256)
+	header.Set(HeaderTimestamp, strconv.FormatInt(claims.Timestamp, 10))
+	header.Set(HeaderNonce, claims.Nonce)
+	header.Set(HeaderChallenge, claims.Challenge)
+	header.Set(HeaderResponseStatus, strconv.Itoa(claims.ResponseStatus))
+	header.Set(HeaderResponseContentType, claims.ResponseContentType)
+	header.Set(HeaderSignedFields, requestUpstreamSignedFields(observation.RequestFields))
+	header.Set(HeaderSignature, base64.RawURLEncoding.EncodeToString(signature))
 	return nil
 }
 
@@ -168,6 +258,17 @@ func CanonicalPayload(claims Claims) ([]byte, error) {
 	}
 	if claims.Timestamp < -maxIJSONSafeInteger || claims.Timestamp > maxIJSONSafeInteger {
 		return nil, errors.New("claim timestamp exceeds the I-JSON safe integer range")
+	}
+	if claims.Challenge != "" {
+		if err := ValidateChallenge(claims.Challenge); err != nil {
+			return nil, err
+		}
+	}
+	if claims.ResponseStatus != 0 && (claims.ResponseStatus < 100 || claims.ResponseStatus > 599) {
+		return nil, errors.New("claim response status must be between 100 and 599")
+	}
+	if claims.ResponseContentType != "" && !validHeaderValue(claims.ResponseContentType) {
+		return nil, errors.New("claim response content type is invalid")
 	}
 
 	encoded, err := json.Marshal(claims)
@@ -284,7 +385,7 @@ func validateUnicodeScalarEscapes(raw []byte) error {
 }
 
 func Verify(publicKey ed25519.PublicKey, header http.Header, expectedDomain, expectedFingerprint, requestPath string, requestFields, responseFields []Field, now time.Time, maxAge time.Duration) error {
-	if err := validateFields(requestFields, responseFields); err != nil {
+	if err := validateFields(requestFields, responseFields, true); err != nil {
 		return err
 	}
 	if header.Get(HeaderAlgorithm) != Algorithm {
@@ -352,6 +453,112 @@ func Verify(publicKey ed25519.PublicKey, header http.Header, expectedDomain, exp
 	return nil
 }
 
+// VerifyRequestUpstream verifies llm-request-upstream-v1. A successful result
+// authenticates only the request and upstream response metadata in observation;
+// it makes no claim about the streaming response body.
+func VerifyRequestUpstream(publicKey ed25519.PublicKey, header http.Header, observation RequestUpstreamObservation, now time.Time, maxAge time.Duration) error {
+	if err := validateFields(observation.RequestFields, nil, false); err != nil {
+		return err
+	}
+	if err := ValidateChallenge(observation.Challenge); err != nil {
+		return err
+	}
+	if header.Get(HeaderAlgorithm) != Algorithm {
+		return fmt.Errorf("unsupported algorithm %q", header.Get(HeaderAlgorithm))
+	}
+	if header.Get(HeaderProfile) != RequestUpstreamProfile {
+		return fmt.Errorf("unsupported attestation profile %q", header.Get(HeaderProfile))
+	}
+	if expected := requestUpstreamSignedFields(observation.RequestFields); header.Get(HeaderSignedFields) != expected {
+		return fmt.Errorf("unexpected signed fields %q", header.Get(HeaderSignedFields))
+	}
+	if observation.Domain == "" || !strings.EqualFold(header.Get(HeaderDomain), observation.Domain) {
+		return fmt.Errorf("domain mismatch: got %q, expected %q", header.Get(HeaderDomain), observation.Domain)
+	}
+	pathHeader, validPathHeader := singleHeader(header, HeaderRequestPath)
+	if !validPathHeader || pathHeader != observation.RequestPath {
+		return fmt.Errorf("request path mismatch: got %q, expected %q", pathHeader, observation.RequestPath)
+	}
+	expectedModel, hasModel, err := modelHeader(observation.RequestFields)
+	if err != nil {
+		return err
+	}
+	if hasModel {
+		modelValue, validModelHeader := singleHeader(header, HeaderModel)
+		if !validModelHeader || modelValue != expectedModel {
+			return fmt.Errorf("model mismatch: got %q, expected %q", modelValue, expectedModel)
+		}
+	} else if hasHeader(header, HeaderModel) {
+		return fmt.Errorf("unexpected model header %q", header.Get(HeaderModel))
+	}
+	if observation.CertificateFingerprint != "" && !strings.EqualFold(header.Get(HeaderCertificateFingerprint), observation.CertificateFingerprint) {
+		return errors.New("certificate fingerprint mismatch")
+	}
+	challenge, validChallengeHeader := singleHeader(header, HeaderChallenge)
+	if !validChallengeHeader || challenge != observation.Challenge {
+		return fmt.Errorf("challenge mismatch: got %q", challenge)
+	}
+	statusText, validStatusHeader := singleHeader(header, HeaderResponseStatus)
+	status, err := strconv.Atoi(statusText)
+	if !validStatusHeader || err != nil || status != observation.ResponseStatus {
+		return fmt.Errorf("response status mismatch: got %q, expected %d", statusText, observation.ResponseStatus)
+	}
+	contentType, validContentTypeHeader := singleHeader(header, HeaderResponseContentType)
+	if !validContentTypeHeader || contentType != observation.ResponseContentType {
+		return fmt.Errorf("response content type mismatch: got %q, expected %q", contentType, observation.ResponseContentType)
+	}
+	timestamp, err := strconv.ParseInt(header.Get(HeaderTimestamp), 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp: %w", err)
+	}
+	age := now.UTC().Sub(time.Unix(timestamp, 0))
+	if age < -30*time.Second || age > maxAge {
+		return fmt.Errorf("attestation timestamp outside allowed window: age %s", age.Round(time.Second))
+	}
+	claims := Claims{
+		Version:              Version,
+		Profile:              RequestUpstreamProfile,
+		KeyID:                header.Get(HeaderKeyID),
+		TLSCertificateSHA256: strings.ToLower(header.Get(HeaderCertificateFingerprint)),
+		Domain:               strings.ToLower(observation.Domain),
+		RequestPath:          observation.RequestPath,
+		RequestFields:        observation.RequestFields,
+		ResponseFields:       []Field{},
+		Timestamp:            timestamp,
+		Nonce:                header.Get(HeaderNonce),
+		Challenge:            observation.Challenge,
+		ResponseStatus:       observation.ResponseStatus,
+		ResponseContentType:  observation.ResponseContentType,
+	}
+	payload, err := CanonicalPayload(claims)
+	if err != nil {
+		return err
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(header.Get(HeaderSignature))
+	if err != nil {
+		return fmt.Errorf("invalid signature encoding: %w", err)
+	}
+	if !ed25519.Verify(publicKey, payload, signature) {
+		return errors.New("signature verification failed")
+	}
+	return nil
+}
+
+// ValidateChallenge applies the public challenge syntax shared by business
+// request attestations and Confidential Space proof requests.
+func ValidateChallenge(challenge string) error {
+	if len(challenge) < 10 || len(challenge) > 74 {
+		return errors.New("challenge must contain 10 to 74 URL-safe ASCII characters")
+	}
+	for _, character := range challenge {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_') {
+			return errors.New("challenge must contain only URL-safe ASCII characters")
+		}
+	}
+	return nil
+}
+
 func modelHeader(requestFields []Field) (string, bool, error) {
 	for _, field := range requestFields {
 		if field.Name != "model" {
@@ -407,9 +614,18 @@ func signedFields(requestFields, responseFields []Field) string {
 	return strings.Join(fields, ",")
 }
 
-func validateFields(requestFields, responseFields []Field) error {
-	if len(requestFields) == 0 || len(responseFields) == 0 {
-		return errors.New("request and response fields must not be empty")
+func requestUpstreamSignedFields(requestFields []Field) string {
+	fields := []string{"tls_certificate_sha256", "domain", "request.path"}
+	for _, field := range requestFields {
+		fields = append(fields, "request.body."+field.Name)
+	}
+	fields = append(fields, "response.status", "response.content_type", "challenge")
+	return strings.Join(fields, ",")
+}
+
+func validateFields(requestFields, responseFields []Field, requireResponse bool) error {
+	if len(requestFields) == 0 || (requireResponse && len(responseFields) == 0) {
+		return errors.New("required request or response fields must not be empty")
 	}
 	seen := make(map[string]struct{}, len(requestFields)+len(responseFields))
 	for _, group := range []struct {

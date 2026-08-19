@@ -55,7 +55,7 @@ OpenAI / Anthropic / Azure OpenAI / AWS Bedrock 等上游
 
 ## 能证明什么，不能证明什么？
 
-当前签名覆盖：
+非流式 `llm-conversation-text-v1` 签名覆盖：
 
 - 上游 HTTPS 叶子证书 SHA-256 指纹；
 - 上游域名和请求 URL path；
@@ -66,9 +66,11 @@ OpenAI / Anthropic / Azure OpenAI / AWS Bedrock 等上游
 当前不覆盖：
 
 - 图片、文件、音频、工具定义、工具调用、推理过程、引用和 usage；
-- HTTP method、query string、状态码和未纳入签名 profile 的其他字段；
-- SSE、AWS EventStream 等流式响应；
+- HTTP method、query string、状态码和未纳入该签名 profile 的其他字段；
+- SSE、AWS EventStream 等流式响应 body；
 - 模型厂商内部如何生成答案，以及中转站的计费、可用性等业务行为。
+
+对于带有合法 `X-Attestation-Challenge` 且请求 JSON 中 `stream` 为 `true` 的 SSE 请求，TAP 可以在首个响应 body 字节之前生成 `llm-request-upstream-v1` 证明。它覆盖上游域名、证书、请求 path、规范化的 `model`/`messages`、`stream:true`、响应状态码、规范化 Content-Type 和客户 challenge，但**不覆盖任何流式响应事件或文本**。中转站可以修改或替换整个流而不导致该 profile 验签失败，客户不能把它解释为响应内容证明。
 
 因此，“没有掺假”准确地说是：**用户能够验证受签名保护的请求与响应内容，没有在 TrustedAIProxy 前后被静默篡改。** 不在签名范围内的字段不能据此得到证明。
 
@@ -82,7 +84,7 @@ OpenAI / Anthropic / Azure OpenAI / AWS Bedrock 等上游
 | AWS Bedrock Invoke | `bedrock-invoke-conversation-v1` |
 | AWS Bedrock Converse | `bedrock-converse-conversation-v1` |
 
-Azure OpenAI 等把模型或 deployment 放在 URL path 中的兼容接口也可以配置。不同协议会被归一化成统一的 `llm-conversation-text-v1` 格式，以便用户重建同一份签名载荷。
+Azure OpenAI 等把模型或 deployment 放在 URL path 中的兼容接口也可以配置。不同协议会被归一化成统一的 `llm-conversation-text-v1` 格式，以便用户重建同一份签名载荷。OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 的 `stream:true` JSON 请求也可以生成 `llm-request-upstream-v1`；当前 Bedrock 流式路径仍只透传、不签名。
 
 这些接口规则已经随项目内置并由服务维护方统一更新。中转站接入方和最终用户都不需要编辑 `signing-rules.json`。
 
@@ -140,6 +142,22 @@ X-Attestation-Proof-Ref: proof-...
 
 中转站必须把这些 headers 原样返回给用户。响应 body 不会被 TrustedAIProxy 修改，输入和输出消息也不会复制到 headers 中。
 
+流式请求必须由客户生成 10–74 位 URL-safe ASCII challenge，由中转站在上游请求中传递：
+
+```text
+X-Attestation-Challenge: CUSTOMER_UNIQUE_CHALLENGE
+```
+
+TAP 会在发送给模型厂商前移除该内部 header。若上游返回 SSE，响应 headers 使用 `llm-request-upstream-v1`，并额外包含：
+
+```text
+X-Attestation-Challenge: CUSTOMER_UNIQUE_CHALLENGE
+X-Attestation-Response-Status: 200
+X-Attestation-Response-Content-Type: text/event-stream
+```
+
+缺失、重复或非法 challenge 时，流仍会正常透传，但不会生成证明 headers。
+
 本地 Demo 可以读取公钥：
 
 ```sh
@@ -157,6 +175,22 @@ go run ./cmd/tap-verify \
   -prompt hello \
   https://api.example.com/v1/chat/completions
 ```
+
+流式 request-upstream profile 的本地 Demo：
+
+```sh
+go run ./cmd/tap-verify \
+  -stream \
+  -challenge "$(openssl rand -hex 16)" \
+  -proxy http://127.0.0.1:8080 \
+  -ca-cert ./mitm-ca.pem \
+  -public-key 'BASE64URL_PUBLIC_KEY' \
+  -expected-domain api.example.com \
+  -prompt hello \
+  https://api.example.com/v1/chat/completions
+```
+
+该命令在读取 SSE body 前验证 request-upstream 签名，并明确输出 `response_body=unverified`。
 
 这里的代理地址和 CA 仅用于本地 Demo，最终用户不需要它们。
 
@@ -235,7 +269,7 @@ bash deploy/confidential-space.sh
 - 不要把 MITM CA 私钥、签名私钥或其他 secret 放进公开镜像。当前仓库中的示例 CA 仅供开发演示，不能用于生产。
 - 生产密钥应通过受控的 Secret Manager/KMS 流程，只释放给批准的 Confidential Space workload。
 - 上游 TLS 始终使用系统根证书和 hostname 正常校验，不能设置 `InsecureSkipVerify`。
-- 只有命中已配置 path、格式正确且能完整提取文本的非流式 JSON 请求才会获得签名；其他请求会正常转发，但不会添加证明 headers。
+- 命中已配置 path、格式正确且能完整提取文本的非流式 JSON 请求可以获得 conversation text attestation。`stream:true` SSE 请求只有在携带唯一合法 challenge 且请求字段、响应 TLS 和响应 metadata 全部有效时才获得 request-upstream attestation；其他请求正常转发但不添加证明 headers。
 - 时间戳只能限制重放窗口；严格防重放还需要验签方缓存已经使用过的 nonce。
 
 ## 许可证

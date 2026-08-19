@@ -63,5 +63,16 @@ class RouteAndModelPolicyTest(unittest.TestCase):
             )
 
 
+class BusinessChallengeTest(unittest.TestCase):
+    def test_accepts_url_safe_challenge(self):
+        verifier.validate_business_challenge("customer_challenge_123")
+
+    def test_rejects_invalid_challenges(self):
+        for challenge in ("short", "contains spaces", "a" * 75):
+            with self.subTest(challenge=challenge):
+                with self.assertRaises(verifier.VerificationError):
+                    verifier.validate_business_challenge(challenge)
+
+
 if __name__ == "__main__":
     unittest.main()

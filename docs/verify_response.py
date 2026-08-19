@@ -42,6 +42,9 @@ HEADER_NONCE = "x-attestation-nonce"
 HEADER_SIGNED_FIELDS = "x-attestation-signed-fields"
 HEADER_SIGNATURE = "x-attestation-signature"
 HEADER_PROOF_REF = "x-attestation-proof-ref"
+HEADER_CHALLENGE = "x-attestation-challenge"
+HEADER_RESPONSE_STATUS = "x-attestation-response-status"
+HEADER_RESPONSE_CONTENT_TYPE = "x-attestation-response-content-type"
 
 REQUIRED_HEADERS = (
     HEADER_ALGORITHM,
@@ -61,6 +64,18 @@ REQUIRED_HEADERS = (
 EXPECTED_SIGNED_FIELDS = (
     "tls_certificate_sha256,domain,request.path,"
     "request.body.model,request.body.messages,response.body.messages"
+)
+
+REQUEST_UPSTREAM_REQUIRED_HEADERS = REQUIRED_HEADERS + (
+    HEADER_CHALLENGE,
+    HEADER_RESPONSE_STATUS,
+    HEADER_RESPONSE_CONTENT_TYPE,
+)
+
+REQUEST_UPSTREAM_EXPECTED_SIGNED_FIELDS = (
+    "tls_certificate_sha256,domain,request.path,"
+    "request.body.model,request.body.messages,request.body.stream,"
+    "response.status,response.content_type,challenge"
 )
 
 
@@ -135,12 +150,21 @@ def response_messages(response_body: Any) -> list[dict[str, str]]:
         raise VerificationError("response is not OpenAI-compatible JSON") from exc
 
 
-def require_headers(headers: Mapping[str, str]) -> dict[str, str]:
+def require_headers(
+    headers: Mapping[str, str], required: tuple[str, ...] = REQUIRED_HEADERS
+) -> dict[str, str]:
     normalized = {str(name).lower(): str(value) for name, value in headers.items()}
-    missing = [name for name in REQUIRED_HEADERS if not normalized.get(name)]
+    missing = [name for name in required if not normalized.get(name)]
     if missing:
         raise VerificationError("missing required headers: " + ", ".join(missing))
     return normalized
+
+
+def validate_business_challenge(challenge: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{10,74}", challenge):
+        raise VerificationError(
+            "business request challenge must be 10-74 URL-safe ASCII characters"
+        )
 
 
 def validate_route_and_model_policy(
@@ -318,6 +342,135 @@ def verify_response(
     )
 
     return "".join(message["text"] for message in messages)
+
+
+def verify_request_upstream(
+    *,
+    headers: Mapping[str, str],
+    public_key_text: str,
+    expected_domain: str,
+    expected_path: str,
+    expected_model: str,
+    request_messages: list[dict[str, str]],
+    challenge: str,
+    response_status: int,
+    response_content_type: str,
+    max_age_seconds: int,
+    nonce_cache_path: str,
+) -> None:
+    """Verify llm-request-upstream-v1 without trusting the stream body."""
+    try:
+        import rfc8785
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError as exc:
+        raise RuntimeError(
+            "missing dependency; run: python3 -m pip install cryptography rfc8785"
+        ) from exc
+
+    validate_business_challenge(challenge)
+    h = require_headers(headers, REQUEST_UPSTREAM_REQUIRED_HEADERS)
+    public_key = base64url_decode(public_key_text, "attestation public key")
+    if len(public_key) != 32:
+        raise VerificationError("attestation public key must decode to 32 bytes")
+    if h[HEADER_ALGORITHM] != "ed25519":
+        raise VerificationError(f"unsupported algorithm: {h[HEADER_ALGORITHM]!r}")
+    if h[HEADER_PROFILE] != "llm-request-upstream-v1":
+        raise VerificationError(f"unsupported profile: {h[HEADER_PROFILE]!r}")
+    if h[HEADER_DOMAIN].lower() != expected_domain.lower():
+        raise VerificationError(
+            f"domain mismatch: got {h[HEADER_DOMAIN]!r}, expected {expected_domain!r}"
+        )
+    validate_route_and_model_policy(
+        h, expected_path=expected_path, expected_model=expected_model
+    )
+    if h[HEADER_SIGNED_FIELDS] != REQUEST_UPSTREAM_EXPECTED_SIGNED_FIELDS:
+        raise VerificationError(
+            "signed fields do not match request-upstream policy: "
+            f"got {h[HEADER_SIGNED_FIELDS]!r}"
+        )
+    if h[HEADER_CHALLENGE] != challenge:
+        raise VerificationError("business request challenge does not match")
+    try:
+        signed_status = int(h[HEADER_RESPONSE_STATUS], 10)
+    except ValueError as exc:
+        raise VerificationError("signed response status is not an integer") from exc
+    if signed_status != response_status:
+        raise VerificationError(
+            f"response status mismatch: got {signed_status}, expected {response_status}"
+        )
+    if h[HEADER_RESPONSE_CONTENT_TYPE] != response_content_type:
+        raise VerificationError(
+            "response content type mismatch: "
+            f"got {h[HEADER_RESPONSE_CONTENT_TYPE]!r}, "
+            f"expected {response_content_type!r}"
+        )
+
+    certificate_sha256 = h[HEADER_CERTIFICATE_SHA256]
+    if not re.fullmatch(r"[0-9a-f]{64}", certificate_sha256):
+        raise VerificationError(
+            "certificate SHA-256 must be 64 lowercase hex characters"
+        )
+    try:
+        timestamp = int(h[HEADER_TIMESTAMP], 10)
+    except ValueError as exc:
+        raise VerificationError("attestation timestamp is not an integer") from exc
+    age = time.time() - timestamp
+    if age < -30 or age > max_age_seconds:
+        raise VerificationError(
+            f"attestation timestamp is outside the allowed window (age={age:.1f}s)"
+        )
+    nonce = base64url_decode(h[HEADER_NONCE], "attestation nonce")
+    if len(nonce) != 16:
+        raise VerificationError("attestation nonce must decode to 16 bytes")
+
+    expected_key_id, expected_proof_ref = public_key_identifiers(public_key)
+    if h[HEADER_KEY_ID] != expected_key_id:
+        raise VerificationError(
+            f"key ID does not match trusted public key: expected {expected_key_id!r}"
+        )
+    if h[HEADER_PROOF_REF] != expected_proof_ref:
+        raise VerificationError(
+            f"proof reference does not match trusted public key: expected {expected_proof_ref!r}"
+        )
+
+    claims = {
+        "version": "trusted-ai-proxy-v1",
+        "profile": "llm-request-upstream-v1",
+        "key_id": h[HEADER_KEY_ID],
+        "tls_certificate_sha256": certificate_sha256,
+        "domain": expected_domain.lower(),
+        "request_path": h[HEADER_PATH],
+        "request_fields": [
+            {"name": "model", "value": h[HEADER_MODEL]},
+            {"name": "messages", "value": request_messages},
+            {"name": "stream", "value": True},
+        ],
+        "response_fields": [],
+        "timestamp": timestamp,
+        "nonce": h[HEADER_NONCE],
+        "challenge": challenge,
+        "response_status": signed_status,
+        "response_content_type": response_content_type,
+    }
+    try:
+        payload = rfc8785.dumps(claims)
+    except (ValueError, TypeError) as exc:
+        raise VerificationError(f"cannot canonicalize signed payload: {exc}") from exc
+    signature = base64url_decode(h[HEADER_SIGNATURE], "attestation signature")
+    if len(signature) != 64:
+        raise VerificationError("attestation signature must decode to 64 bytes")
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, payload)
+    except InvalidSignature as exc:
+        raise VerificationError("Ed25519 signature verification failed") from exc
+
+    consume_nonce(
+        nonce_cache_path,
+        key_id=h[HEADER_KEY_ID],
+        nonce=h[HEADER_NONCE],
+        timestamp=timestamp,
+    )
 
 
 def parse_args() -> argparse.Namespace:
