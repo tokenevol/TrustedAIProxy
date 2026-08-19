@@ -84,6 +84,7 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
+          IMAGE="$(printf '%s' "${IMAGE}" | tr '[:upper:]' '[:lower:]')"
           echo "### Published image" >> "${GITHUB_STEP_SUMMARY}"
           echo '```text' >> "${GITHUB_STEP_SUMMARY}"
           echo "${IMAGE}@${DIGEST}" >> "${GITHUB_STEP_SUMMARY}"
