@@ -60,7 +60,6 @@ DEFAULT_IMAGE_REFERENCE = (
     + DEFAULT_IMAGE_DIGEST
 )
 POSTGRES_SECRET_ENV = "TAP_PG_DSN_SECRET_VERSION"
-LEGACY_POSTGRES_SECRET_ENV = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
 
 
 def expected_container_args(audience: str) -> list[str]:
@@ -340,9 +339,8 @@ def validate_bundle_and_policy(
     }
     expected_env_override = {}
     if args.secret_version:
-        secret_env_name = getattr(args, "secret_env_name", POSTGRES_SECRET_ENV)
-        expected_env[secret_env_name] = args.secret_version
-        expected_env_override[secret_env_name] = args.secret_version
+        expected_env[POSTGRES_SECRET_ENV] = args.secret_version
+        expected_env_override[POSTGRES_SECRET_ENV] = args.secret_version
     expect_equal(container.get("env"), expected_env, "submods.container.env")
     expect_equal(
         container.get("env_override", {}),
@@ -418,15 +416,6 @@ def parse_args() -> argparse.Namespace:
         "--without-postgres",
         action="store_true",
         help="expect a single-replica launch without a PostgreSQL secret override",
-    )
-    parser.add_argument(
-        "--secret-env-name",
-        choices=(POSTGRES_SECRET_ENV, LEGACY_POSTGRES_SECRET_ENV),
-        default=POSTGRES_SECRET_ENV,
-        help=(
-            "attested environment variable carrying the secret version "
-            f"(default: {POSTGRES_SECRET_ENV})"
-        ),
     )
     parser.add_argument("--hwmodel", default="GCP_AMD_SEV")
     parser.add_argument("--support-attribute", default="STABLE")

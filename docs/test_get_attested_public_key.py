@@ -34,7 +34,6 @@ class ValidateBundlePolicyTest(unittest.TestCase):
             image_digest="sha256:" + "a" * 64,
             image_reference="example.invalid/image@sha256:" + "a" * 64,
             secret_version="projects/example-project/secrets/postgres/versions/1",
-            secret_env_name="TAP_PG_DSN_SECRET_VERSION",
         )
         expires_at = 2_000_000_000
         bundle = {
@@ -131,17 +130,18 @@ class ValidateBundlePolicyTest(unittest.TestCase):
         )
         self.assertEqual(result["proof_ref"], args.proof_ref)
 
-    def test_accepts_deprecated_secret_environment_when_explicit(self):
+    def test_rejects_unapproved_secret_environment(self):
         bundle, claims, challenge, args = self.fixture()
-        args.secret_env_name = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
         container = claims["submods"]["container"]
         secret_version = container["env"].pop("TAP_PG_DSN_SECRET_VERSION")
-        container["env"][args.secret_env_name] = secret_version
-        container["env_override"] = {args.secret_env_name: secret_version}
-        result = verifier.validate_bundle_and_policy(
-            bundle, claims, challenge=challenge, args=args
-        )
-        self.assertEqual(result["proof_ref"], args.proof_ref)
+        container["env"]["UNAPPROVED_PG_DSN_SECRET_VERSION"] = secret_version
+        container["env_override"] = {
+            "UNAPPROVED_PG_DSN_SECRET_VERSION": secret_version
+        }
+        with self.assertRaises(verifier.AttestationError):
+            verifier.validate_bundle_and_policy(
+                bundle, claims, challenge=challenge, args=args
+            )
 
 
 if __name__ == "__main__":

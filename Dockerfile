@@ -16,7 +16,7 @@ COPY --from=build /out/tap /tap
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY signing-rules.json /etc/tap/signing-rules.json
 
-LABEL "tee.launch_policy.allow_env_override"="TAP_PG_DSN_SECRET_VERSION,TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
+LABEL "tee.launch_policy.allow_env_override"="TAP_PG_DSN_SECRET_VERSION"
 LABEL "tee.launch_policy.log_redirect"="always"
 
 WORKDIR /data

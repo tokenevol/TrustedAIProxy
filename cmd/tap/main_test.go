@@ -210,14 +210,6 @@ func TestPostgresDSNSecretRejectsDirectConfiguration(t *testing.T) {
 	}
 }
 
-func TestPostgresDSNSecretRejectsBothBrandPrefixes(t *testing.T) {
-	t.Setenv(postgresDSNSecretVersionEnv, "projects/example-project/secrets/postgres-dsn/versions/1")
-	t.Setenv(legacyPostgresDSNSecretVersionEnv, "projects/example-project/secrets/postgres-dsn/versions/2")
-	if _, configured, err := openPostgresProofStore(context.Background()); err == nil || !configured {
-		t.Fatalf("configured=%v err=%v", configured, err)
-	}
-}
-
 func TestLoadProxyConfigRejectsUnsafeEntries(t *testing.T) {
 	tests := map[string]string{
 		"empty paths":           `{"paths":{}}`,

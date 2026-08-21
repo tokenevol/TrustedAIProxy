@@ -27,10 +27,9 @@ import (
 )
 
 const (
-	postgresDSNSecretVersionEnv       = "TAP_PG_DSN_SECRET_VERSION"
-	legacyPostgresDSNSecretVersionEnv = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
-	relativeSigningRulesPath          = "signing-rules.json"
-	fixedSigningRulesPath             = "/etc/tap/signing-rules.json"
+	postgresDSNSecretVersionEnv = "TAP_PG_DSN_SECRET_VERSION"
+	relativeSigningRulesPath    = "signing-rules.json"
+	fixedSigningRulesPath       = "/etc/tap/signing-rules.json"
 )
 
 func main() {
@@ -152,13 +151,6 @@ func main() {
 
 func openPostgresProofStore(ctx context.Context) (*proofcache.PostgresStore, bool, error) {
 	secretVersion := strings.TrimSpace(os.Getenv(postgresDSNSecretVersionEnv))
-	legacySecretVersion := strings.TrimSpace(os.Getenv(legacyPostgresDSNSecretVersionEnv))
-	if secretVersion != "" && legacySecretVersion != "" {
-		return nil, true, fmt.Errorf("%s cannot be combined with deprecated %s", postgresDSNSecretVersionEnv, legacyPostgresDSNSecretVersionEnv)
-	}
-	if secretVersion == "" {
-		secretVersion = legacySecretVersion
-	}
 	if secretVersion == "" {
 		return proofcache.OpenPostgresFromEnv(ctx)
 	}

@@ -140,7 +140,7 @@ python3 docs/get_attested_public_key.py \
   --output-json
 ```
 
-`--secret-version` 必须是固定编号版本，不能使用 `latest`。如果批准的部署明确不使用 PostgreSQL，应改传 `--without-postgres`。仍处于旧环境变量迁移期的部署可以显式传 `--secret-env-name TRUSTED_PROXY_PG_DSN_SECRET_VERSION`；新部署应使用默认的 `TAP_PG_DSN_SECRET_VERSION`。
+`--secret-version` 必须是固定编号版本，不能使用 `latest`。如果批准的部署明确不使用 PostgreSQL，应改传 `--without-postgres`。Confidential Space 部署和客户验证策略只接受 `TAP_PG_DSN_SECRET_VERSION`，不接受其他 Secret Manager 版本环境变量。
 
 启用 PostgreSQL 持久化后，如果客户需要重新取得一个已经签发的 proof，必须同时提交该 proof 的 `proof_ref` 和签发时使用的原始 challenge：
 
