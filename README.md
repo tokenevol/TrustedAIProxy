@@ -51,7 +51,7 @@ OpenAI / Anthropic / Azure OpenAI / AWS Bedrock 等上游
 3. 上游返回结果后，TrustedAIProxy 对关键内容生成 Ed25519 签名，并把证明放进响应 headers。
 4. 中转站把原始业务内容和证明 headers 一起返回给用户；用户独立验签。
 
-客户不需要连接代理、不需要安装 MITM CA，也不需要相信中转站提供的公钥。客户信任的是：由 Google Confidential Space attestation 绑定到已批准镜像的签名公钥。
+客户不需要连接代理、不需要安装 MITM CA，也不需要相信中转站提供的公钥。每个 TAP 进程启动时在内存中生成独立的 Ed25519 密钥，并在开放监听端口前取得与该公钥绑定的 Google Confidential Space attestation；失败则终止启动。客户信任的是由 Google attestation 绑定到已批准镜像的临时签名公钥。
 
 ## 能证明什么，不能证明什么？
 
@@ -86,28 +86,35 @@ OpenAI / Anthropic / Azure OpenAI / AWS Bedrock 等上游
 
 Azure OpenAI 等把模型或 deployment 放在 URL path 中的兼容接口也可以配置。不同协议会被归一化成统一的 `llm-conversation-text-v1` 格式，以便用户重建同一份签名载荷。OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 的 `stream:true` JSON 请求也可以生成 `llm-request-upstream-v1`；当前 Bedrock 流式路径仍只透传、不签名。
 
-这些接口规则已经随项目内置并由服务维护方统一更新。中转站接入方和最终用户都不需要编辑 `signing-rules.json`。
+这些接口规则已经随项目内置并由服务维护方统一更新。运行时优先从当前工作目录读取相对路径 `signing-rules.json`，文件不存在时再读取镜像内固定路径 `/etc/tap/signing-rules.json`，不接受 CLI 路径覆盖。从仓库根目录本地运行时可以直接使用仓库文件；若相对路径文件存在但内容非法，TAP 会直接失败，不会静默降级到固定路径。规则变化必须进入新镜像并产生新的不可变 digest。
 
-## 快速体验
+## 构建与运行
 
-### 1. 本地启动
+### 1. 本地检查
 
-首次本地运行可以显式生成一套开发用 MITM CA：
+本地可以运行完整测试：
 
 ```sh
-go run ./cmd/tap \
-  -listen 127.0.0.1:8080 \
-  -config ./signing-rules.json \
-  -ca-cert ./mitm-ca.pem \
-  -ca-key ./mitm-ca-key.pem \
-  -signing-key ./attestation-key.pem \
-  -key-id demo-1 \
-  -generate-mitm-ca
+go test ./...
+python3 -B -m unittest discover -s docs -p 'test_*.py'
+go vet ./...
 ```
 
-CA 文件生成后，后续启动应去掉 `-generate-mitm-ca`。这是本地体验方式，不是生产密钥方案。
+`tap` 运行时必须连接 Confidential Space launcher。它会在内存中生成新的 Ed25519 密钥，并在监听前请求一次启动 attestation；普通本地环境没有 launcher，因此会按设计启动失败。测试通过 fake token provider 覆盖这条流程，不提供跳过 attestation 的运行参数。
 
-### 2. 让中转站的上游流量经过代理
+### 2. 在 Confidential Space 中启动
+
+使用本仓库的部署模板，并始终指定不可变镜像 digest：
+
+```sh
+cp deploy/confidential-space.example.sh deploy/confidential-space.sh
+# 设置 IMAGE、项目、区域、实例和 service account
+bash deploy/confidential-space.sh
+```
+
+每次进程启动都会生成新的 `key_id` 和 `proof_ref`；私钥不读取、不写入任何 PEM 文件。启动 attestation 使用服务内部随机 nonce，只充当 fail-closed 门禁，不能代替客户自己的 proof challenge。
+
+### 3. 让中转站的上游流量经过代理
 
 在 New API、One API 或其他中转服务的运行环境中设置：
 
@@ -121,7 +128,7 @@ export NO_PROXY=127.0.0.1,localhost
 
 推荐把 TrustedAIProxy 作为 sidecar 或独立的内部服务运行，只允许中转站访问其代理端口。
 
-### 3. 检查签名结果
+### 4. 检查签名结果
 
 文本请求和响应成功解析后，响应会包含：
 
@@ -158,7 +165,7 @@ X-Attestation-Response-Content-Type: text/event-stream
 
 缺失、重复或非法 challenge 时，流仍会正常透传，但不会生成证明 headers。
 
-本地 Demo 可以读取公钥：
+内部诊断可以读取当前进程的公钥：
 
 ```sh
 curl http://127.0.0.1:8080/.well-known/http-attestation-key
@@ -176,7 +183,7 @@ go run ./cmd/tap-verify \
   https://api.example.com/v1/chat/completions
 ```
 
-流式 request-upstream profile 的本地 Demo：
+流式 request-upstream profile 的诊断方式：
 
 ```sh
 go run ./cmd/tap-verify \
@@ -192,7 +199,7 @@ go run ./cmd/tap-verify \
 
 该命令在读取 SSE body 前验证 request-upstream 签名，并明确输出 `response_body=unverified`。
 
-这里的代理地址和 CA 仅用于本地 Demo，最终用户不需要它们。
+这里的代理地址和 CA 只用于内部诊断，最终用户不需要它们。
 
 ## 用户如何验证？
 
@@ -218,7 +225,9 @@ Google attestation 不需要每次请求都调用。用户可以按 workload 启
 
 ## 多副本与证明持久化
 
-默认情况下，服务不连接数据库，也不保留历史证明。多副本生产部署建议使用 PostgreSQL：每个副本注册自己的 `proof_ref`，任意副本都能把新的证明请求路由到持有对应私钥的副本，负载均衡器不需要会话亲和。
+默认情况下，服务不连接数据库，也不保留历史证明。多副本生产部署建议使用 PostgreSQL：每个运行中的进程注册自己的 `proof_ref`，任意副本都能把新的证明请求路由到仍持有对应内存私钥的 owner，负载均衡器不需要会话亲和。
+
+进程退出后，其临时私钥不可恢复。PostgreSQL 可以保存已经针对特定客户 challenge 签发的历史 proof，但不能为已退出进程补签一个新的 challenge。客户应在收到未知 `proof_ref` 的业务响应后尽快获取并保存证明包。
 
 本地可以直接设置 DSN：
 
@@ -266,8 +275,9 @@ bash deploy/confidential-space.sh
 - TrustedAIProxy 会解密中转站发往上游的 HTTPS 流量，代理端口必须限制在内部网络，不能暴露给用户或互联网。
 - 最终用户不应安装或信任内部 MITM CA；它只服务于中转站到代理之间的内部链路。
 - 生产环境应使用离线 Root CA 签发专用 Intermediate CA。Root 私钥不得进入运行环境。
-- 不要把 MITM CA 私钥、签名私钥或其他 secret 放进公开镜像。当前仓库中的示例 CA 仅供开发演示，不能用于生产。
-- 生产密钥应通过受控的 Secret Manager/KMS 流程，只释放给批准的 Confidential Space workload。
+- 不要把 MITM CA 私钥或其他 secret 放进公开镜像。当前仓库中的示例 CA 仅供开发演示，不能用于生产。
+- Ed25519 私钥由每个进程在内存中临时生成，从不从文件或 Secret Manager 加载，也不写入磁盘；进程退出后密钥身份随之终止。生产运行环境应禁用 core dump、heap dump 和未受控的调试端点。
+- TAP 在开放监听端口前必须成功取得一次与临时公钥绑定的 startup workload attestation；这只是启动门禁，客户仍须使用自己的 challenge 获取并验证 Google proof。
 - 上游 TLS 始终使用系统根证书和 hostname 正常校验，不能设置 `InsecureSkipVerify`。
 - 命中已配置 path、格式正确且能完整提取文本的非流式 JSON 请求可以获得 conversation text attestation。`stream:true` SSE 请求只有在携带唯一合法 challenge 且请求字段、响应 TLS 和响应 metadata 全部有效时才获得 request-upstream attestation；其他请求正常转发但不添加证明 headers。
 - 时间戳只能限制重放窗口；严格防重放还需要验签方缓存已经使用过的 nonce。

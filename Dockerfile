@@ -26,4 +26,4 @@ EXPOSE 8080/tcp
 # workload must run as root to request customer-bound attestation tokens.
 USER root:root
 ENTRYPOINT ["/tap"]
-CMD ["-listen", ":8080", "-config", "/etc/tap/signing-rules.json", "-ca-cert", "/data/mitm-ca.pem", "-ca-key", "/data/mitm-ca-key.pem", "-signing-key", "/data/attestation-key.pem", "-attestation-audience", "tap/customer/v1"]
+CMD ["-listen", ":8080", "-ca-cert", "/data/mitm-ca.pem", "-ca-key", "/data/mitm-ca-key.pem", "-attestation-audience", "tap/customer/v1"]

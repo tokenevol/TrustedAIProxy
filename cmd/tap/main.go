@@ -5,10 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,17 +29,16 @@ import (
 const (
 	postgresDSNSecretVersionEnv       = "TAP_PG_DSN_SECRET_VERSION"
 	legacyPostgresDSNSecretVersionEnv = "TRUSTED_PROXY_PG_DSN_SECRET_VERSION"
+	relativeSigningRulesPath          = "signing-rules.json"
+	fixedSigningRulesPath             = "/etc/tap/signing-rules.json"
 )
 
 func main() {
 	var (
 		listen              = flag.String("listen", ":8080", "HTTP/HTTPS proxy listen address")
-		configFile          = flag.String("config", "signing-rules.json", "JSON signing rules file")
 		caCertFile          = flag.String("ca-cert", "mitm-ca.pem", "MITM CA certificate PEM file")
 		caKeyFile           = flag.String("ca-key", "mitm-ca-key.pem", "MITM CA private key PEM file")
 		generateMITMCA      = flag.Bool("generate-mitm-ca", false, "create the MITM CA files when absent (local development only)")
-		signingKey          = flag.String("signing-key", "attestation-key.pem", "Ed25519 attestation private key PEM file")
-		keyID               = flag.String("key-id", "", "attestation public key identifier (defaults to a replica public-key digest)")
 		maxJSONBody         = flag.Int64("max-json-bytes", mitmproxy.DefaultMaxJSONBytes, "maximum JSON body size to inspect")
 		verbose             = flag.Bool("verbose", false, "enable goproxy request logs")
 		attestationSocket   = flag.String("attestation-socket", gcpattestation.DefaultSocketPath, "Confidential Space launcher Unix socket")
@@ -51,7 +48,7 @@ func main() {
 	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	proxyConfig, err := loadProxyConfig(*configFile)
+	proxyConfig, loadedSigningRulesPath, err := loadProxyConfigWithFallback(relativeSigningRulesPath, fixedSigningRulesPath)
 	if err != nil {
 		log.Fatalf("load proxy config: %v", err)
 	}
@@ -67,18 +64,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("load internal MITM CA: %v (provision a stable CA, or use -generate-mitm-ca for local development)", err)
 	}
-	privateKey, err := loadOrCreateSigningKey(*signingKey)
-	if err != nil {
-		log.Fatalf("load attestation signing key: %v", err)
-	}
-	publicKey := privateKey.Public().(ed25519.PublicKey)
-	if *keyID == "" {
-		*keyID = attestation.PublicKeyID(publicKey)
-	}
-	if err := validateKeyID(*keyID); err != nil {
-		log.Fatal(err)
-	}
 	googleAttestation := gcpattestation.New(*attestationSocket, *attestationAudience)
+	bootstrapContext, cancelBootstrap := context.WithTimeout(runContext, 20*time.Second)
+	identity, err := bootstrapSigningIdentity(bootstrapContext, googleAttestation)
+	cancelBootstrap()
+	if err != nil {
+		log.Fatalf("bootstrap workload-bound signing identity: %v", err)
+	}
+	defer identity.Destroy()
+	log.Printf("generated and attested ephemeral signing identity %s", identity.keyID)
+
 	databaseContext, cancelDatabase := context.WithTimeout(context.Background(), 10*time.Second)
 	proofStore, databaseConfigured, err := openPostgresProofStore(databaseContext)
 	cancelDatabase()
@@ -88,10 +83,10 @@ func main() {
 	var proofs *proofcache.Cache
 	var proofRouter *proofcache.Router
 	if databaseConfigured {
-		proofs, err = proofcache.New(googleAttestation, publicKey, *keyID, proofStore)
+		proofs, err = proofcache.New(googleAttestation, identity.publicKey, identity.keyID, proofStore)
 		log.Printf("PostgreSQL proof persistence is enabled")
 	} else {
-		proofs, err = proofcache.New(googleAttestation, publicKey, *keyID)
+		proofs, err = proofcache.New(googleAttestation, identity.publicKey, identity.keyID)
 		log.Printf("PostgreSQL proof persistence is not configured; historical proof lookup is disabled")
 	}
 	if err != nil {
@@ -116,13 +111,13 @@ func main() {
 
 	proxy := mitmproxy.New(mitmproxy.Config{
 		CA:             ca,
-		Signer:         attestation.NewSigner(privateKey, *keyID),
+		Signer:         identity.signer,
 		PathRules:      proxyConfig.PathRules,
 		MaxJSONBytes:   *maxJSONBody,
 		Verbose:        *verbose,
 		ProofReference: proofs.ProofRef(),
 	})
-	proxy.NonproxyHandler = metadataHandler(publicKey, *keyID, proofs, proofRouter)
+	proxy.NonproxyHandler = metadataHandler(identity.publicKey, identity.keyID, proofs, proofRouter)
 
 	server := &http.Server{
 		Addr:              *listen,
@@ -130,7 +125,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	log.Printf("loaded %d path rules from %s", proxyConfig.PathRules.Len(), *configFile)
+	log.Printf("loaded %d path rules from %s", proxyConfig.PathRules.Len(), loadedSigningRulesPath)
 	log.Printf("internal proxy listening on %s; internal clients must trust CA certificate %s", *listen, *caCertFile)
 	shutdownComplete := make(chan struct{})
 	go func() {
@@ -263,6 +258,21 @@ type proxyRuntimeConfig struct {
 	PathRules *mitmproxy.CompiledPathRules
 }
 
+func loadProxyConfigWithFallback(relativePath, fixedPath string) (proxyRuntimeConfig, string, error) {
+	config, err := loadProxyConfig(relativePath)
+	if err == nil {
+		return config, relativePath, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return proxyRuntimeConfig{}, "", fmt.Errorf("load relative signing rules %q: %w", relativePath, err)
+	}
+	config, err = loadProxyConfig(fixedPath)
+	if err != nil {
+		return proxyRuntimeConfig{}, "", fmt.Errorf("load fixed signing rules %q after %q was absent: %w", fixedPath, relativePath, err)
+	}
+	return config, fixedPath, nil
+}
+
 func loadProxyConfig(path string) (proxyRuntimeConfig, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -304,49 +314,44 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func validateKeyID(keyID string) error {
-	if keyID == "" || len(keyID) > 128 {
-		return errors.New("-key-id must contain 1 to 128 characters")
-	}
-	for _, character := range keyID {
-		if character < 0x21 || character > 0x7e || character == ',' {
-			return errors.New("-key-id may only contain visible ASCII characters except comma")
-		}
-	}
-	return nil
+type signingIdentity struct {
+	privateKey ed25519.PrivateKey
+	publicKey  ed25519.PublicKey
+	keyID      string
+	signer     *attestation.Signer
 }
 
-func loadOrCreateSigningKey(path string) (ed25519.PrivateKey, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		_, key, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-		der, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			return nil, err
-		}
-		data = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-		if err := os.WriteFile(path, data, 0600); err != nil {
-			return nil, err
-		}
-		log.Printf("created attestation signing key %s", path)
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("invalid signing key PEM")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+// bootstrapSigningIdentity returns a signer only after the Confidential Space
+// launcher has issued a fresh workload attestation bound to its public key.
+// The private key is generated inside the process and is never serialized.
+func bootstrapSigningIdentity(ctx context.Context, provider proofcache.TokenProvider) (*signingIdentity, error) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
+		return nil, fmt.Errorf("generate ephemeral Ed25519 key: %w", err)
+	}
+	keyID := attestation.PublicKeyID(publicKey)
+	preflight, err := proofcache.New(provider, publicKey, keyID)
+	if err != nil {
+		clear(privateKey)
 		return nil, err
 	}
-	key, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, errors.New("signing key is not Ed25519")
+	if err := preflight.Preflight(ctx); err != nil {
+		clear(privateKey)
+		return nil, err
 	}
-	return key, nil
+	return &signingIdentity{
+		privateKey: privateKey,
+		publicKey:  publicKey,
+		keyID:      keyID,
+		signer:     attestation.NewSigner(privateKey, keyID),
+	}, nil
+}
+
+// Destroy makes the process-held key unusable after shutdown. Go cannot
+// promise that runtime-created temporary copies have also been overwritten.
+func (i *signingIdentity) Destroy() {
+	if i == nil {
+		return
+	}
+	clear(i.privateKey)
 }

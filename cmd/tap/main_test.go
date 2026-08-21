@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"tap/internal/attestation"
 	"tap/internal/proofcache"
 )
 
@@ -34,6 +36,9 @@ func TestLoadProxyConfig(t *testing.T) {
 }
 
 func TestRepositorySigningRulesLoad(t *testing.T) {
+	if relativeSigningRulesPath != "signing-rules.json" || fixedSigningRulesPath != "/etc/tap/signing-rules.json" {
+		t.Fatalf("runtime signing rules paths = %q, %q", relativeSigningRulesPath, fixedSigningRulesPath)
+	}
 	config, err := loadProxyConfig(filepath.Join("..", "..", "signing-rules.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,16 +48,92 @@ func TestRepositorySigningRulesLoad(t *testing.T) {
 	}
 }
 
+func TestLoadProxyConfigPrefersRelativePath(t *testing.T) {
+	relativePath := writeConfig(t, `{"paths":{"/relative":{"extractor":"openai-chat-conversation-v1"}}}`)
+	fixedPath := writeConfig(t, `{"paths":{"/fixed":{"extractor":"openai-chat-conversation-v1"}}}`)
+	config, loadedPath, err := loadProxyConfigWithFallback(relativePath, fixedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedPath != relativePath {
+		t.Fatalf("loaded path = %q, want %q", loadedPath, relativePath)
+	}
+	if _, ok := config.PathRules.Match("/relative"); !ok {
+		t.Fatal("relative signing rules were not loaded")
+	}
+}
+
+func TestLoadProxyConfigFallsBackWhenRelativePathIsAbsent(t *testing.T) {
+	relativePath := filepath.Join(t.TempDir(), "missing-signing-rules.json")
+	fixedPath := writeConfig(t, `{"paths":{"/fixed":{"extractor":"openai-chat-conversation-v1"}}}`)
+	config, loadedPath, err := loadProxyConfigWithFallback(relativePath, fixedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedPath != fixedPath {
+		t.Fatalf("loaded path = %q, want %q", loadedPath, fixedPath)
+	}
+	if _, ok := config.PathRules.Match("/fixed"); !ok {
+		t.Fatal("fixed signing rules were not loaded")
+	}
+}
+
+func TestLoadProxyConfigDoesNotHideInvalidRelativeRules(t *testing.T) {
+	relativePath := writeConfig(t, `{"paths":`)
+	fixedPath := writeConfig(t, `{"paths":{"/fixed":{"extractor":"openai-chat-conversation-v1"}}}`)
+	if _, _, err := loadProxyConfigWithFallback(relativePath, fixedPath); err == nil {
+		t.Fatal("invalid relative signing rules must fail closed")
+	}
+}
+
 type fakeTokenProvider struct {
 	nonces []string
+	err    error
 }
 
 func (p *fakeTokenProvider) Audience() string { return "tap-test" }
 
 func (p *fakeTokenProvider) Token(_ context.Context, nonces []string) (string, error) {
 	p.nonces = append([]string(nil), nonces...)
+	if p.err != nil {
+		return "", p.err
+	}
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())))
 	return "header." + payload + ".signature", nil
+}
+
+func TestBootstrapSigningIdentityIsEphemeralAndAttested(t *testing.T) {
+	provider := &fakeTokenProvider{}
+	identity, err := bootstrapSigningIdentity(context.Background(), provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.signer == nil || len(identity.publicKey) != ed25519.PublicKeySize || len(identity.privateKey) != ed25519.PrivateKeySize {
+		t.Fatal("bootstrap returned an incomplete signing identity")
+	}
+	if identity.keyID != attestation.PublicKeyID(identity.publicKey) {
+		t.Fatalf("key id = %q, want public-key digest", identity.keyID)
+	}
+	if len(provider.nonces) != 2 || provider.nonces[0] == "" || provider.nonces[1] == "" {
+		t.Fatalf("startup attestation nonces = %v", provider.nonces)
+	}
+	identity.Destroy()
+	for _, value := range identity.privateKey {
+		if value != 0 {
+			t.Fatal("destroy did not clear the in-memory private key")
+		}
+	}
+}
+
+func TestBootstrapSigningIdentityFailsClosed(t *testing.T) {
+	want := errors.New("attestation unavailable")
+	identity, err := bootstrapSigningIdentity(context.Background(), &fakeTokenProvider{err: want})
+	if !errors.Is(err, want) {
+		t.Fatalf("bootstrap error = %v, want %v", err, want)
+	}
+	if identity != nil {
+		t.Fatal("failed bootstrap exposed a signing identity")
+	}
 }
 
 func testProofCache(t *testing.T, publicKey ed25519.PublicKey, provider *fakeTokenProvider) *proofcache.Cache {

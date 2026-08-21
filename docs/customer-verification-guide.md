@@ -1,6 +1,6 @@
 # TAP 客户验证指南：可信 AI HTTPS 响应证明
 
-文档版本：1.7
+文档版本：1.8
 
 签名协议版本：`trusted-ai-proxy-v1`
 
@@ -70,7 +70,7 @@ MITM 代理及其 CA 只在服务内部使用：
 
 ## 4. 第一阶段：验证运行环境和内容签名公钥
 
-此阶段通常在首次连接、workload 重启、Ed25519 公钥变化或客户会话建立时执行一次，不需要为每条 OpenAI 响应请求 Google token。
+此阶段通常在首次连接、workload 重启、Ed25519 公钥变化或客户会话建立时执行一次，不需要为每条 OpenAI 响应请求 Google token。每个 TAP 进程在内存中生成独立的 Ed25519 密钥；它先取得一次使用服务内部随机 nonce 的 startup workload attestation，成功后才开放监听端口。该启动证明只用于 fail-closed 门禁，不能代替本阶段由客户 challenge 绑定的证明。
 
 ### 4.1 生成一次性 Google proof challenge
 
@@ -111,7 +111,7 @@ curl --fail --silent --show-error \
 }
 ```
 
-客户应按 `proof_ref` 缓存已经验证的 proof，直到 `expires_at` 或公钥轮换；后续业务响应不再重复传输 `attestation_token`。多副本部署时每个副本的公钥和 `proof_ref` 不同。
+客户应按 `proof_ref` 缓存已经验证的 proof，直到 `expires_at` 或公钥轮换；后续业务响应不再重复传输 `attestation_token`。每个进程启动都会生成新的公钥、`key_id` 和 `proof_ref`，同一实例重启后也必须视为新的签名身份。
 
 推荐采用响应优先流程：客户先调用业务接口，从响应头读取 `X-Attestation-Proof-Ref`。如果本地还没有该引用对应的有效证明，则生成新的 challenge，并向同一服务域名请求：
 
@@ -182,7 +182,9 @@ Google 会轮换 JWKS。客户可以缓存公钥，但遇到未知 `kid` 时必�
 
 任何一项不符合都必须终止验证。
 
-当前仓库 Dockerfile 会把仓库内的 Demo MITM CA 及私钥复制进镜像。由该 Dockerfile 直接构建的镜像只能用于开发验证，不能作为生产批准镜像。生产构建必须先改为通过受控的 Secret Manager/KMS bootstrap 提供专用 CA，再由客户批准新的不可变 digest。
+当前仓库 Dockerfile 会把仓库内的 Demo MITM CA 证书及其私钥复制进镜像，但不会包含或持久化 Ed25519 签名私钥。由该 Dockerfile 直接构建的镜像只能用于开发验证，不能作为生产批准镜像。生产构建必须先改为通过受控的 Secret Manager/KMS bootstrap 提供专用 MITM CA，再由客户批准新的不可变 digest。
+
+签名规则优先从进程工作目录的相对路径 `signing-rules.json` 加载；仅当该文件不存在时，才回退到镜像内的 `/etc/tap/signing-rules.json`，且不接受 CLI 路径覆盖。相对文件存在但内容非法时必须 fail closed，不能回退。生产容器的 `/data` 工作目录不得注入同名规则文件；规则变化必须构建并重新批准新的不可变镜像 digest，客户对 attestation 中容器参数和挂载的允许策略也不得接受额外规则来源。
 
 ### 4.4 验证 Ed25519 公钥绑定
 
@@ -240,7 +242,7 @@ X-Attestation-Proof-Ref: proof-<base64url public-key hash>
 
 `X-Attestation-Proof-Ref` 只是 proof 缓存索引，不是信任根。客户必须使用该引用找到已验证的 proof，并确认 proof 中的公钥与用于验签的公钥一致。
 
-多副本部署应留空 `-key-id`，让程序根据副本公钥生成唯一 ID；如果人为给所有副本配置同一个 ID，客户无法可靠地区分 proof。
+`X-Attestation-Key-Id` 始终由当前进程公钥的摘要生成，不接受人工覆盖；客户仍不能只根据 key ID 信任公钥。
 
 ### 5.2 检查固定字段和防重放信息
 
@@ -392,6 +394,8 @@ go run ./cmd/tap-verify \
 - 客户怀疑密钥、网络或运行环境受到影响。
 
 MITM CA 的生成、分发和轮换属于服务方内部运维，不触发客户侧证书更新，也不属于客户验证协议。
+
+进程退出会销毁其临时 Ed25519 私钥。已经持久化的 challenge-bound proof 和对应公钥仍可用于历史验证，但任何副本都不能为已销毁的 `proof_ref` 签发新的 challenge。客户收到未知 `proof_ref` 后应尽快取得并保存证明包。
 
 ## 9. 官方参考资料
 

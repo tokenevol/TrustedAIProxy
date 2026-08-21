@@ -6,6 +6,7 @@ package proofcache
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -91,6 +92,22 @@ func New(provider TokenProvider, publicKey ed25519.PublicKey, keyID string, stor
 func (c *Cache) KeyID() string    { return c.keyID }
 func (c *Cache) ProofRef() string { return c.proofRef }
 
+// Preflight proves that the current workload can obtain a fresh Google
+// attestation token bound to this cache's public key. The server-generated
+// challenge is deliberately discarded: customers must still request a proof
+// using their own challenge before trusting the key.
+func (c *Cache) Preflight(ctx context.Context) error {
+	random := make([]byte, 24)
+	if _, err := rand.Read(random); err != nil {
+		return fmt.Errorf("generate startup attestation challenge: %w", err)
+	}
+	challenge := "startup_" + base64.RawURLEncoding.EncodeToString(random)
+	if _, _, err := c.requestToken(ctx, challenge); err != nil {
+		return fmt.Errorf("obtain startup workload attestation: %w", err)
+	}
+	return nil
+}
+
 func (c *Cache) Issue(ctx context.Context, challenge string) (Bundle, error) {
 	if strings.TrimSpace(challenge) == "" {
 		return Bundle{}, errors.New("challenge is required")
@@ -104,16 +121,9 @@ func (c *Cache) Issue(ctx context.Context, challenge string) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("load persisted attestation proof: %w", err)
 		}
 	}
-	token, err := c.provider.Token(ctx, []string{challenge, c.binding})
+	token, expiresAt, err := c.requestToken(ctx, challenge)
 	if err != nil {
 		return Bundle{}, err
-	}
-	expiresAt, err := tokenExpiry(token)
-	if err != nil {
-		return Bundle{}, err
-	}
-	if !expiresAt.After(time.Now()) {
-		return Bundle{}, errors.New("attestation token is already expired")
 	}
 	bundle := c.bundle(challenge, token, expiresAt)
 	if c.store != nil {
@@ -123,6 +133,21 @@ func (c *Cache) Issue(ctx context.Context, challenge string) (Bundle, error) {
 		}
 	}
 	return bundle, nil
+}
+
+func (c *Cache) requestToken(ctx context.Context, challenge string) (string, time.Time, error) {
+	token, err := c.provider.Token(ctx, []string{challenge, c.binding})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expiresAt, err := tokenExpiry(token)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if !expiresAt.After(time.Now()) {
+		return "", time.Time{}, errors.New("attestation token is already expired")
+	}
+	return token, expiresAt, nil
 }
 
 // Find returns an already-issued proof, including an expired historical
