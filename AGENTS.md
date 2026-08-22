@@ -11,7 +11,7 @@ TrustedAIProxy is an internal HTTP/HTTPS MITM proxy for AI gateway services. For
 ## Code map
 
 - `cmd/tap/` wires configuration, CA and signing keys, Confidential Space attestation, optional PostgreSQL persistence, metadata endpoints, graceful shutdown, and the proxy server.
-- `cmd/tap-verify/` is the local OpenAI-compatible end-to-end verification client for both profiles; it is a demo, not the complete customer verifier.
+- `docs/get_attested_public_key.py` and `docs/verify_response.py` are the Python reference clients for workload-proof and OpenAI-compatible response verification; they are demos, not complete customer verifiers.
 - `internal/mitmproxy/` performs TLS interception, path-rule matching, bounded body inspection, protocol extraction, upstream TLS fingerprinting, and response signing.
 - `internal/attestation/` owns the public signed-claims contract: semantic fields, RFC 8785/JCS canonicalization, Ed25519 headers, signing, and verification.
 - `internal/gcpattestation/` requests challenge-bound tokens from the Confidential Space launcher socket. `internal/gcpsecret/` reads explicitly numbered Secret Manager versions.

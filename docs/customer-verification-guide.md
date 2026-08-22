@@ -257,7 +257,7 @@ X-Attestation-Proof-Ref: proof-<base64url public-key hash>
 
 验签成功后再把 nonce 写入短期已消费缓存。
 
-仓库中的 `docs/verify_response.py` 是 OpenAI Chat Completions 单用户文本请求的参考客户端。它会把命令行传入的 model 和允许的上游 path 作为本地策略，并在签名验证成功后把 nonce 原子写入持久化 SQLite 缓存。参考脚本不会自动删除已消费 nonce；生产系统只能在记录已经超过自身允许的最大重放窗口后进行维护清理：
+仓库中的 `docs/verify_response.py` 是 OpenAI Chat Completions 单用户文本请求的参考客户端，同时支持非流式 conversation-text 和流式 request-upstream profile。它会把命令行传入的 model 和允许的上游 path 作为本地策略，并在签名验证成功后把 nonce 原子写入持久化 SQLite 缓存。参考脚本不会自动删除已消费 nonce；生产系统只能在记录已经超过自身允许的最大重放窗口后进行维护清理：
 
 ```sh
 python3 docs/verify_response.py \
@@ -350,12 +350,13 @@ X-Attestation-Proof-Ref: proof-<base64url public-key hash>
 本地参考客户端可以在读取 SSE body 前完成该 profile 的验签：
 
 ```sh
-go run ./cmd/tap-verify \
-  -stream \
-  -challenge "$(openssl rand -hex 16)" \
-  -public-key 'BASE64URL_PUBLIC_KEY' \
-  -expected-domain api.openai.com \
-  https://api.openai.com/v1/chat/completions
+python3 docs/verify_response.py \
+  --stream \
+  --challenge "$(openssl rand -hex 16)" \
+  --base-url "https://SERVICE_HOST/v1" \
+  --model APPROVED_MODEL \
+  --expected-domain api.openai.com \
+  --expected-path /v1/chat/completions
 ```
 
 ## 6. 上游证书指纹的含义

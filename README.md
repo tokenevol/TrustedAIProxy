@@ -171,35 +171,35 @@ X-Attestation-Response-Content-Type: text/event-stream
 curl http://127.0.0.1:8080/.well-known/http-attestation-key
 ```
 
-并使用仓库中的参考程序做端到端验签：
+仓库统一使用 Python 参考客户端完成端到端验签。它通过正常的客户服务地址发起 OpenAI Chat Completions 请求，并在验签成功后把 nonce 写入本地 SQLite 防重放缓存：
 
 ```sh
-go run ./cmd/tap-verify \
-  -proxy http://127.0.0.1:8080 \
-  -ca-cert ./mitm-ca.pem \
-  -public-key 'BASE64URL_PUBLIC_KEY' \
-  -expected-domain api.example.com \
-  -prompt hello \
-  https://api.example.com/v1/chat/completions
+OPENAI_API_KEY='API_KEY' \
+ATTESTATION_PUBLIC_KEY='BASE64URL_PUBLIC_KEY' \
+python3 docs/verify_response.py \
+  --base-url 'https://SERVICE_HOST/v1' \
+  --model APPROVED_MODEL \
+  --expected-domain api.example.com \
+  --expected-path /v1/chat/completions \
+  --prompt hello
 ```
 
 流式 request-upstream profile 的诊断方式：
 
 ```sh
-go run ./cmd/tap-verify \
-  -stream \
-  -challenge "$(openssl rand -hex 16)" \
-  -proxy http://127.0.0.1:8080 \
-  -ca-cert ./mitm-ca.pem \
-  -public-key 'BASE64URL_PUBLIC_KEY' \
-  -expected-domain api.example.com \
-  -prompt hello \
-  https://api.example.com/v1/chat/completions
+OPENAI_API_KEY='API_KEY' \
+ATTESTATION_PUBLIC_KEY='BASE64URL_PUBLIC_KEY' \
+python3 docs/verify_response.py \
+  --stream \
+  --challenge "$(openssl rand -hex 16)" \
+  --base-url 'https://SERVICE_HOST/v1' \
+  --model APPROVED_MODEL \
+  --expected-domain api.example.com \
+  --expected-path /v1/chat/completions \
+  --prompt hello
 ```
 
 该命令在读取 SSE body 前验证 request-upstream 签名，并明确输出 `response_body=unverified`。
-
-这里的代理地址和 CA 只用于内部诊断，最终用户不需要它们。
 
 ## 用户如何验证？
 

@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import time
@@ -165,6 +166,15 @@ def validate_business_challenge(challenge: str) -> None:
         raise VerificationError(
             "business request challenge must be 10-74 URL-safe ASCII characters"
         )
+
+
+def normalized_content_type(value: str) -> str:
+    """Return the lowercase media type without parameters."""
+    media_type = value.split(";", 1)[0].strip().lower()
+    token = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+    if not re.fullmatch(rf"{token}/{token}", media_type):
+        raise VerificationError("streaming response has an invalid Content-Type")
+    return media_type
 
 
 def validate_route_and_model_policy(
@@ -495,6 +505,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--prompt", default="你好")
     parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="verify request-upstream headers before reading an SSE response body",
+    )
+    parser.add_argument(
+        "--challenge",
+        help="URL-safe challenge for --stream (generated when omitted)",
+    )
+    parser.add_argument(
         "--expected-domain",
         default="api.deepseek.com",
         help="trusted upstream domain policy (default: %(default)s)",
@@ -525,6 +544,8 @@ def parse_args() -> argparse.Namespace:
         )
     if args.max_age <= 0:
         parser.error("--max-age must be greater than zero")
+    if args.challenge and not args.stream:
+        parser.error("--challenge requires --stream")
     if (
         not args.expected_path.startswith("/")
         or "?" in args.expected_path
@@ -534,6 +555,47 @@ def parse_args() -> argparse.Namespace:
             "--expected-path must be an absolute URL path without query or fragment"
         )
     return args
+
+
+def run_streaming(client: Any, args: argparse.Namespace) -> None:
+    challenge = args.challenge or secrets.token_urlsafe(24)
+    validate_business_challenge(challenge)
+    request_messages = [{"role": "user", "text": args.prompt}]
+    with client.chat.completions.with_streaming_response.create(
+        model=args.model,
+        messages=[{"role": "user", "content": args.prompt}],
+        stream=True,
+        extra_headers={"X-Attestation-Challenge": challenge},
+    ) as response:
+        content_type = normalized_content_type(
+            response.headers.get("content-type", "")
+        )
+        if content_type != "text/event-stream":
+            raise VerificationError(
+                "streaming response Content-Type is not text/event-stream"
+            )
+        verify_request_upstream(
+            headers=response.headers,
+            public_key_text=args.public_key,
+            expected_domain=args.expected_domain,
+            expected_path=args.expected_path,
+            expected_model=args.model,
+            request_messages=request_messages,
+            challenge=challenge,
+            response_status=response.status_code,
+            response_content_type=content_type,
+            max_age_seconds=args.max_age,
+            nonce_cache_path=args.nonce_cache,
+        )
+        print(
+            "VALID REQUEST ONLY: "
+            f"domain={response.headers.get(HEADER_DOMAIN)} "
+            f"certificate_sha256="
+            f"{response.headers.get(HEADER_CERTIFICATE_SHA256)} "
+            f"challenge={challenge} response_body=unverified"
+        )
+        for line in response.iter_lines():
+            print(line)
 
 
 def main() -> int:
@@ -550,6 +612,9 @@ def main() -> int:
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
     try:
+        if args.stream:
+            run_streaming(client, args)
+            return 0
         raw_response = client.chat.completions.with_raw_response.create(
             model=args.model,
             messages=[{"role": "user", "content": args.prompt}],
