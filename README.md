@@ -270,6 +270,12 @@ cp deploy/confidential-space.example.sh deploy/confidential-space.sh
 bash deploy/confidential-space.sh
 ```
 
+## 网站与 GitHub Pages
+
+产品网站位于 [`website/`](website/)，是无需构建步骤的静态站点。[`.github/workflows/pages.yml`](.github/workflows/pages.yml) 会在 `main` 分支的站点文件或 Pages workflow 发生变化时自动发布，也可以从 GitHub Actions 页面手动触发。
+
+首次部署前，在仓库 **Settings → Pages → Build and deployment → Source** 中选择 **GitHub Actions**。网站目录已经由 `.dockerignore` 排除，因此网站文件和网站内容变更都不会进入或使 Go 镜像的 Docker 构建层失效。
+
 ## 生产安全要求
 
 - TrustedAIProxy 会解密中转站发往上游的 HTTPS 流量，代理端口必须限制在内部网络，不能暴露给用户或互联网。

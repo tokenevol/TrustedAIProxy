@@ -3,6 +3,7 @@
 Dockerfile
 README.md
 deploy
+website
 *.pem
 *.key
 proxy-key.pem
