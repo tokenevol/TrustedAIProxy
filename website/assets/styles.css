@@ -375,7 +375,7 @@ code, pre { font-family: var(--mono); }
   .problem-grid, .scope-grid, .split-heading, .verification-layout, .evidence-grid, .support-layout, .cta-panel { grid-template-columns: 1fr; }
   .split-heading { gap: 22px; }
   .architecture-panel { grid-template-columns: 1fr; gap: 14px; }
-  .arch-link { width: 1px; height: 38px; flex-direction: row; }
+  .arch-link { width: 1px; height: 38px; flex-direction: row; justify-self: center; }
   .arch-link span { display: none; }.arch-link i { height: 100%; width: 1px; }.arch-link i::after { right: -3px; top: auto; bottom: 0; transform: rotate(90deg); }
   .principle-steps { grid-template-columns: 1fr 1fr; }
   .principle-step:nth-child(2) { border-right: 0; }.principle-step:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
