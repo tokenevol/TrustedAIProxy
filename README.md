@@ -290,10 +290,10 @@ bash deploy/confidential-space.sh
 - 命中已配置 path、格式正确且能完整提取文本的非流式 JSON 请求可以获得 conversation text attestation。`stream:true` SSE 请求只有在携带唯一合法 challenge 且请求字段、响应 TLS 和响应 metadata 全部有效时才获得 request-upstream attestation；其他请求正常转发但不添加证明 headers。
 - 时间戳只能限制重放窗口；严格防重放还需要验签方缓存已经使用过的 nonce。
 
-## 许可证
+## 开源协议与技术支持
 
 Copyright 2026 TokenEvol Inc.
 
-本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，仅允许该许可证定义的非商业用途。任何商业用途均须事先取得版权所有者的单独书面授权；如需商业授权或技术咨询服务，请联系 [business@tokenevol.com](mailto:business@tokenevol.com)。
+本项目采用 [MIT License](LICENSE) 开源。你可以依照许可证自由使用、复制、修改、合并、发布、分发、再授权和销售本软件的副本，但须保留许可证要求的版权与许可声明。
 
-本项目是 source-available 软件，并非 OSI 定义的开源软件。完整且具有约束力的条款以 [LICENSE](LICENSE) 为准；本节仅为便于理解的摘要，不替代许可证正文。
+如需部署指导、系统集成、定制开发或其他技术支持，请联系 [business@tokenevol.com](mailto:business@tokenevol.com)。完整且具有约束力的条款以 [LICENSE](LICENSE) 为准。
