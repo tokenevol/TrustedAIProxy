@@ -1,102 +1,106 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="TrustedAIProxy 最终用户指南：获取 Confidential Space 证明、验证 Ed25519 公钥、逐条响应验签与流式请求边界。" />
+    <meta name="description" content="TrustedAIProxy user guide: obtain Confidential Space proofs, verify Ed25519 public keys, check individual responses, and understand streaming boundaries." />
+    <link rel="alternate" hreflang="en" href="user-guide.html" />
+    <link rel="alternate" hreflang="zh-CN" href="zh/user-guide.html" />
+    <link rel="alternate" hreflang="x-default" href="user-guide.html" />
     <meta name="theme-color" content="#07110f" />
-    <title>用户使用与验签指南｜TrustedAIProxy</title>
+    <title>User and Verification Guide | TrustedAIProxy</title>
     <script>document.documentElement.classList.add("js")</script>
     <link rel="stylesheet" href="assets/styles.css" />
     <script defer src="assets/site.js"></script>
   </head>
   <body class="docs-body">
-    <a class="skip-link" href="#content">跳到文档内容</a>
+    <a class="skip-link" href="#content">Skip to documentation</a>
     <header class="site-header scrolled" data-header>
       <div class="shell header-inner">
-        <a class="brand" href="index.html" aria-label="TrustedAIProxy 首页">
+        <a class="brand" href="index.html" aria-label="TrustedAIProxy home">
           <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34 9v10c0 9.2-5.7 14.8-14 18-8.3-3.2-14-8.8-14-18V9l14-6Z" /><path d="m13.5 20.2 4.2 4.2 9-9" /></svg>
           <span>Trusted<span>AI</span>Proxy</span>
         </a>
-        <nav class="desktop-nav" aria-label="主导航"><a href="index.html#principle">技术原理</a><a href="index.html#verification">验证过程</a><a href="index.html#scope">证明边界</a></nav>
+        <nav class="desktop-nav" aria-label="Main navigation"><a href="index.html#principle">How it works</a><a href="index.html#verification">Verification</a><a href="index.html#scope">Proof scope</a></nav>
         <div class="header-actions">
-          <a class="text-link desktop-only" href="deploy.html">部署指南</a>
+          <a class="language-switch" href="zh/user-guide.html" lang="zh-CN" hreflang="zh-CN" aria-label="切换到中文" data-language-switch>中文</a>
+          <a class="text-link desktop-only" href="deploy.html">Deploy guide</a>
           <a class="button button-small button-light" href="https://github.com/tokenevol/TrustedAIProxy" target="_blank" rel="noreferrer">GitHub</a>
-          <button class="menu-button" type="button" aria-label="打开菜单" aria-expanded="false" data-menu-button><span></span><span></span></button>
+          <button class="menu-button" type="button" aria-label="Open menu" aria-expanded="false" data-menu-button><span></span><span></span></button>
         </div>
       </div>
-      <nav class="mobile-nav" aria-label="移动端导航" data-mobile-nav><a href="index.html">首页</a><a href="index.html#verification">验证过程</a><a href="index.html#scope">证明边界</a><a href="deploy.html">部署指南</a><a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></nav>
+      <nav class="mobile-nav" aria-label="Mobile navigation" data-mobile-nav><a href="index.html">Home</a><a href="index.html#verification">Verification</a><a href="index.html#scope">Proof scope</a><a href="deploy.html">Deploy guide</a><a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></nav>
     </header>
 
     <main>
       <section class="docs-hero">
         <div class="shell">
-          <div class="breadcrumbs"><a href="index.html">首页</a><span>/</span><span>用户文档</span></div>
-          <h1>从“收到响应”到“独立验证”</h1>
-          <p>通过标准 HTTPS 获取经过 Google 证明绑定的公钥，再验证每条业务响应。无需连接内部代理、安装 MITM CA 或运行仓库脚本。</p>
-          <div class="docs-meta"><span>文档版本：1.1</span><span>签名协议：trusted-ai-proxy-v1</span><span>核对日期：2026-08-27</span></div>
+          <div class="breadcrumbs"><a href="index.html">Home</a><span>/</span><span>User docs</span></div>
+          <h1>From receiving a response to verifying it</h1>
+          <p>Use standard HTTPS to obtain a public key bound to a Google attestation, then verify each API response. No internal proxy connection, MITM CA installation, or repository scripts required.</p>
+          <div class="docs-meta"><span>Document version: 1.1</span><span>Signature protocol: trusted-ai-proxy-v1</span><span>Reviewed: 2026-08-27</span></div>
         </div>
       </section>
 
       <div class="shell docs-shell">
         <aside class="docs-sidebar">
-          <strong>本页目录</strong>
-          <nav aria-label="文档目录">
-            <a href="#mental-model">先理解两层验证</a>
-            <a href="#policy">开始前：固定验证策略</a>
-            <a href="#key">1. 获取证明公钥</a>
-            <a href="#response">2. 请求并验证响应</a>
-            <a href="#stream">流式请求</a>
-            <a href="#production-client">生产客户端要求</a>
-            <a href="#failures">失败如何处理</a>
-            <a href="#faq">常见问题</a>
+          <strong>On this page</strong>
+          <nav aria-label="Documentation contents">
+            <a href="#mental-model">Understand the two verification layers</a>
+            <a href="#policy">Before you start: pin your policy</a>
+            <a href="#key">1. Get an attested public key</a>
+            <a href="#response">2. Request and verify a response</a>
+            <a href="#stream">Streaming requests</a>
+            <a href="#production-client">Production client requirements</a>
+            <a href="#failures">Handling failures</a>
+            <a href="#faq">Frequently asked questions</a>
           </nav>
-          <div class="sidebar-card"><small>OPERATOR</small><strong>需要部署自己的 TAP？</strong><a href="deploy.html">Google Cloud 部署 →</a></div>
+          <div class="sidebar-card"><small>OPERATOR</small><strong>Need to deploy your own TAP?</strong><a href="deploy.html">Google Cloud deployment →</a></div>
         </aside>
 
         <article class="docs-content" id="content">
           <section id="mental-model">
-            <h2>先理解两层验证</h2>
-            <p>TrustedAIProxy 不要求你“相信服务方发来的公钥”。完整信任链分成两层：</p>
+            <h2>Understand the two verification layers</h2>
+            <p>TrustedAIProxy does not ask you to trust a public key simply because the service sent it. The complete trust chain has two layers:</p>
             <table class="check-table">
-              <thead><tr><th>层级</th><th>验证对象</th><th>频率</th></tr></thead>
+              <thead><tr><th>Layer</th><th>What you verify</th><th>When</th></tr></thead>
               <tbody>
-                <tr><td>环境证明</td><td>Google OIDC token → Confidential Space、镜像 digest、项目/实例/服务账号 → Ed25519 公钥绑定</td><td>首次连接、公钥变化或 proof 过期时</td></tr>
-                <tr><td>响应证明</td><td>经过证明的 Ed25519 公钥 → 上游 TLS、域名、path、model、请求/响应文本、时间戳与 nonce</td><td>每一条业务响应</td></tr>
+                <tr><td>Workload attestation</td><td>Google OIDC token → Confidential Space, image digest, project/instance/service account → Ed25519 public key binding</td><td>On first connection, key changes, or proof expiry</td></tr>
+                <tr><td>Response attestation</td><td>Attested Ed25519 public key → upstream TLS, domain, path, model, request/response text, timestamp, and nonce</td><td>For every API response</td></tr>
               </tbody>
             </table>
-            <div class="callout"><span class="callout-icon">i</span><div><strong>这不是模型厂商的直接签名</strong><p>证明由你批准的 Confidential Space workload 生成。它证明该 workload 通过正常 TLS 连接观察到哪些内容，而不是宣称 OpenAI、Anthropic 或 AWS 对文本签过名。</p></div></div>
+            <div class="callout"><span class="callout-icon">i</span><div><strong>This is not a direct signature from the model provider</strong><p>An approved Confidential Space workload generates the proof. It attests to what that workload observed over a normally verified TLS connection; it does not claim that OpenAI, Anthropic, or AWS signed the text.</p></div></div>
           </section>
 
           <section id="policy">
-            <h2>开始前：从可信带外渠道固定验证策略</h2>
-            <p>在查看任何待验证响应之前，先从合同、客户门户或由服务方签名的配置包取得期望值。响应中的自报值不能反过来定义你的信任策略。</p>
+            <h2>Before you start: pin policy through a trusted out-of-band channel</h2>
+            <p>Before inspecting any response to verify, obtain expected values from a contract, customer portal, or signed configuration bundle from the service. Self-reported response values must not define your trust policy.</p>
             <table class="check-table">
-              <thead><tr><th>必须预配置</th><th>示例</th></tr></thead>
+              <thead><tr><th>Required configuration</th><th>Example</th></tr></thead>
               <tbody>
                 <tr><td>Google issuer</td><td><code>https://confidentialcomputing.googleapis.com</code></td></tr>
                 <tr><td>Attestation audience</td><td><code>tap/customer/v1</code></td></tr>
-                <tr><td>镜像</td><td>批准的 image reference 与 <code>sha256:…</code> digest</td></tr>
-                <tr><td>运营身份</td><td>GCP project ID/number、zone、实例允许列表、workload 服务账号</td></tr>
-                <tr><td>硬件策略</td><td><code>GCP_AMD_SEV</code> 或 <code>GCP_INTEL_TDX</code></td></tr>
-                <tr><td>上游策略</td><td>允许的域名、path、model 与对应协议提取器</td></tr>
-                <tr><td>证明策略</td><td><code>ed25519</code>、允许的 profile、最大时间窗口</td></tr>
-                <tr><td>多副本设置</td><td>固定编号的 PostgreSQL Secret version，或明确声明不使用 PostgreSQL</td></tr>
+                <tr><td>Image</td><td>Approved image reference and <code>sha256:…</code> digest</td></tr>
+                <tr><td>Operator identity</td><td>GCP project ID/number, zone, instance allowlist, and workload service account</td></tr>
+                <tr><td>Hardware policy</td><td><code>GCP_AMD_SEV</code> or <code>GCP_INTEL_TDX</code></td></tr>
+                <tr><td>Upstream policy</td><td>Allowed domains, paths, models, and corresponding protocol extractors</td></tr>
+                <tr><td>Attestation policy</td><td><code>ed25519</code>, allowed profiles, and maximum time window</td></tr>
+                <tr><td>Replica configuration</td><td>A fixed numeric PostgreSQL secret version, or an explicit declaration that PostgreSQL is not used</td></tr>
               </tbody>
             </table>
-            <p>服务方若只给你一个公钥，却不提供镜像 digest 与实例策略，你无法确认这把密钥来自哪个程序。</p>
+            <p>If the service provides only a public key without an image digest and instance policy, you cannot establish which program owns that key.</p>
           </section>
 
           <section id="key">
-            <div class="step-heading"><span class="step-number">1</span><h2>通过 HTTP 获取经过 Google 证明绑定的公钥</h2></div>
-            <p>先在本地生成一次性 challenge，再请求服务的 Confidential Space 证明端点。challenge 必须是每次不同的 10–74 位 URL-safe ASCII 字符。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export PROOF_CHALLENGE="$(openssl rand -hex 16)"
+            <div class="step-heading"><span class="step-number">1</span><h2>Obtain a public key bound to a Google attestation over HTTP</h2></div>
+            <p>Generate a one-time challenge locally, then request the service's Confidential Space proof endpoint. Use a different 10–74 character URL-safe ASCII challenge each time.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export PROOF_CHALLENGE="$(openssl rand -hex 16)"
 
 curl --fail --silent --show-error \
   --header "Accept: application/json" \
   --output confidential-attestation.json \
   "https://SERVICE_HOST/.well-known/confidential-attestation?nonce=${PROOF_CHALLENGE}"</code></pre></div>
-            <p>端点返回 Google 签发的 OIDC token，以及准备给业务响应验签使用的 Ed25519 公钥：</p>
+            <p>The endpoint returns a Google-issued OIDC token and the Ed25519 public key intended for API response verification:</p>
             <div class="code-block"><pre><code>{
   "token_type": "OIDC",
   "attestation_token": "GOOGLE_SIGNED_JWT",
@@ -111,10 +115,10 @@ curl --fail --silent --show-error \
     "binding_nonce": "BASE64URL_SHA256_BINDING"
   }
 }</code></pre></div>
-            <div class="callout warning"><span class="callout-icon">!</span><div><strong>取到公钥不等于公钥已经可信</strong><p>在 Google token 验证完成前，整个 JSON 都是未受信输入。HTTP 示例负责取回数据；客户端仍需使用自己平台的 JWT、SHA-256 和 Ed25519 库执行下面的检查。</p></div></div>
-            <h3>验证 Google token 与公钥绑定</h3>
-            <p>通过 HTTPS 获取 Google OIDC discovery 和其中声明的 JWKS；只信任 discovery 中与本地策略完全一致的 issuer，并根据 JWT header 的 <code>kid</code> 选择 Google 公钥。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>curl --fail --silent --show-error \
+            <div class="callout warning"><span class="callout-icon">!</span><div><strong>Receiving a public key does not make it trusted</strong><p>Treat the entire JSON as untrusted until the Google token has been verified. The HTTP example only retrieves data; your client still needs JWT, SHA-256, and Ed25519 libraries to perform the following checks.</p></div></div>
+            <h3>Verify the Google token and public key binding</h3>
+            <p>Fetch Google's OIDC discovery document and its declared JWKS over HTTPS. Trust only an issuer that exactly matches local policy, and select the Google public key using the JWT header's <code>kid</code>.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>curl --fail --silent --show-error \
   --output google-oidc.json \
   "https://confidentialcomputing.googleapis.com/.well-known/openid-configuration"
 
@@ -122,10 +126,10 @@ curl --fail --silent --show-error \
   --output google-jwks.json \
   "https://www.googleapis.com/service_accounts/v1/metadata/jwk/signer@confidentialspace-sign.iam.gserviceaccount.com"</code></pre></div>
             <ol>
-              <li>验证 JWT 签名、<code>iss</code>、<code>aud</code>、有效时间和允许的签名算法；未知 <code>kid</code> 时刷新 JWKS，不能关闭验签。</li>
-              <li>核对 <code>swname=CONFIDENTIAL_SPACE</code>、<code>dbgstat=disabled-since-boot</code>、Secure Boot、硬件类型，以及带外批准的镜像 digest、项目、实例和服务账号。</li>
-              <li>确认返回的 <code>challenge_nonce</code> 精确等于本地 <code>PROOF_CHALLENGE</code>，<code>algorithm</code> 为 <code>ed25519</code>，base64url 解码后的公钥恰好为 32 字节。</li>
-              <li>按下式重新计算公钥 binding，并确认它同时等于 <code>binding_nonce</code>、且与 challenge 一起出现在 Google token 的 <code>eat_nonce</code> 中。</li>
+              <li>Verify the JWT signature, <code>iss</code>, <code>aud</code>, validity period, and allowed signature algorithm. Refresh JWKS for an unknown <code>kid</code>; never disable signature verification.</li>
+              <li>Check <code>swname=CONFIDENTIAL_SPACE</code>, <code>dbgstat=disabled-since-boot</code>, Secure Boot, hardware type, and the out-of-band approved image digest, project, instance, and service account.</li>
+              <li>Confirm that the returned <code>challenge_nonce</code> exactly matches the local <code>PROOF_CHALLENGE</code>, <code>algorithm</code> is <code>ed25519</code> and that the base64url-decoded public key is exactly 32 bytes.</li>
+              <li>Recompute the public key binding below. Confirm that it equals <code>binding_nonce</code> and appears alongside the challenge in the Google token's <code>eat_nonce</code>.</li>
             </ol>
             <div class="code-block"><pre><code>binding_nonce = base64url_no_padding(
   SHA256(
@@ -134,13 +138,13 @@ curl --fail --silent --show-error \
     raw_32_byte_ed25519_public_key
   )
 )</code></pre></div>
-            <p>全部通过后，才把 <code>public_key</code>、<code>key_id</code>、<code>proof_ref</code> 与 <code>expires_at</code> 作为一组缓存。proof 过期、公钥变化或本地策略更新时重新取证。</p>
+            <p>Only after every check passes, cache <code>public_key</code>, <code>key_id</code>, <code>proof_ref</code> and <code>expires_at</code> together. Obtain a new proof when the proof expires, the public key changes, or local policy is updated.</p>
           </section>
 
           <section id="response">
-            <div class="step-heading"><span class="step-number">2</span><h2>发送 HTTP 请求并验证响应证明</h2></div>
-            <p>像平常一样调用服务 API，同时保存原始请求、完整响应 body 和原始 response headers。下面是一个非流式 OpenAI Chat Completions 示例：</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export API_KEY="YOUR_API_KEY"
+            <div class="step-heading"><span class="step-number">2</span><h2>Send an HTTP request and verify the response attestation</h2></div>
+            <p>Call the service API as usual and save the original request, complete response body, and raw response headers. This example uses non-streaming OpenAI Chat Completions:</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export API_KEY="YOUR_API_KEY"
 
 curl --silent --show-error \
   --dump-header response.headers \
@@ -150,10 +154,10 @@ curl --silent --show-error \
   -H "Content-Type: application/json" \
   --data '{
     "model": "APPROVED_MODEL",
-    "messages": [{"role": "user", "content": "你好"}],
+    "messages": [{"role": "user", "content": "Hello"}],
     "stream": false
   }'</code></pre></div>
-            <p>可证明的响应会带有以下 headers；缺少、重复或格式非法时必须标记为<strong>未证明</strong>：</p>
+            <p>An attested response includes the following headers. If any are missing, duplicated, or malformed, mark it as <strong>unverified</strong>:</p>
             <div class="code-block"><pre><code>X-Attestation-Algorithm: ed25519
 X-Attestation-Profile: llm-conversation-text-v1
 X-Attestation-Key-Id: ed25519-...
@@ -166,27 +170,27 @@ X-Attestation-Nonce: BASE64URL_NONCE
 X-Attestation-Signed-Fields: tls_certificate_sha256,domain,request.path,request.body.model,request.body.messages,response.body.messages
 X-Attestation-Signature: BASE64URL_ED25519_SIGNATURE
 X-Attestation-Proof-Ref: proof-...</code></pre></div>
-            <h3>TAP 如何生成这条签名</h3>
+            <h3>How TAP generates the signature</h3>
             <ol>
-              <li>先清除上游可能伪造或残留的 <code>X-Attestation-*</code> headers。</li>
-              <li>正常验证上游 TLS 证书和 hostname；同时记录上游域名、request path 与叶子证书 SHA-256。</li>
-              <li>按路径对应的版本化提取器，将实际 model、请求消息和响应消息归一成保留角色、顺序、消息边界与原文的纯文本结构。</li>
-              <li>加入协议版本、profile、key ID、Unix 时间戳和随机 nonce，使用 RFC 8785 JCS 生成唯一的 UTF-8 JSON payload。</li>
-              <li>使用与第 1 步证明公钥对应、且不离开 workload 的 Ed25519 私钥签名，并将签名及重建 payload 所需的 metadata 放进 response headers；业务 response body 保持不变。</li>
+              <li>First, remove any forged or stale upstream <code>X-Attestation-*</code> headers.</li>
+              <li>Verify the upstream TLS certificate and hostname normally, and record the upstream domain, request path, and leaf certificate SHA-256 fingerprint.</li>
+              <li>Use the path's versioned extractor to normalize the actual model and request/response messages into plain-text structures that preserve roles, order, message boundaries, and original text.</li>
+              <li>Add the protocol version, profile, key ID, Unix timestamp, and random nonce, then use RFC 8785 JCS to produce a deterministic UTF-8 JSON payload.</li>
+              <li>Sign with the Ed25519 private key corresponding to the attested public key from step 1. The private key stays inside the workload. Return the signature and metadata needed to reconstruct the payload in response headers; leave the API response body unchanged.</li>
             </ol>
-            <p>如果 path 未配置、content type 不支持、body 超限、语义提取不完整或上游 TLS 验证失败，TAP 会继续转发业务流量，但不会生成本地证明 headers。</p>
-            <p>以上 HTTP 示例对应的 JCS payload 形状如下。<code>RESPONSE_TEXT</code> 应替换为从实际响应按提取器规则得到的文本：</p>
-            <div class="code-block"><pre><code>{"domain":"APPROVED_UPSTREAM_DOMAIN","key_id":"ed25519-...","nonce":"BASE64URL_NONCE","profile":"llm-conversation-text-v1","request_fields":[{"name":"model","value":"APPROVED_MODEL"},{"name":"messages","value":[{"role":"user","text":"你好"}]}],"request_path":"/v1/chat/completions","response_fields":[{"name":"messages","value":[{"role":"assistant","text":"RESPONSE_TEXT"}]}],"timestamp":1787835600,"tls_certificate_sha256":"64_lowercase_hex","version":"trusted-ai-proxy-v1"}</code></pre></div>
-            <h3>客户端如何验证</h3>
+            <p>If the path is unconfigured, the content type is unsupported, the body exceeds limits, extraction is incomplete, or upstream TLS verification fails, TAP does not generate local attestation headers. Unsupported content is forwarded normally; upstream TLS verification is never bypassed.</p>
+            <p>The JCS payload for the HTTP example above has this shape. Replace <code>RESPONSE_TEXT</code> with text extracted from the actual response according to the extractor rules:</p>
+            <div class="code-block"><pre><code>{"domain":"APPROVED_UPSTREAM_DOMAIN","key_id":"ed25519-...","nonce":"BASE64URL_NONCE","profile":"llm-conversation-text-v1","request_fields":[{"name":"model","value":"APPROVED_MODEL"},{"name":"messages","value":[{"role":"user","text":"Hello"}]}],"request_path":"/v1/chat/completions","response_fields":[{"name":"messages","value":[{"role":"assistant","text":"RESPONSE_TEXT"}]}],"timestamp":1787835600,"tls_certificate_sha256":"64_lowercase_hex","version":"trusted-ai-proxy-v1"}</code></pre></div>
+            <h3>How the client verifies it</h3>
             <ol>
-              <li>确认 <code>proof_ref</code>、<code>key_id</code> 与第 1 步缓存的有效 proof 一致，并使用该 proof 中的公钥。</li>
-              <li>严格检查 algorithm、profile、signed-fields、header 唯一性与格式；domain 必须匹配本地策略。path、model 与证书指纹在验签前仍是未受信输入。</li>
-              <li>使用原始请求和响应，按 header 所示 path 对应的提取器重建 <code>request_fields</code> 与 <code>response_fields</code>，再用 headers 中的 metadata 构造 claims。</li>
-              <li>对 claims 执行 RFC 8785 JCS；base64url 解码 64 字节签名，并用经过证明的 Ed25519 公钥验证 payload。</li>
-              <li>验签通过后再对 path、model 和可选证书 pin 执行本地准入策略；检查 timestamp 未超窗，并把 nonce 原子写入持久化缓存，重复 nonce 直接拒绝。</li>
+              <li>Confirm that <code>proof_ref</code>, <code>key_id</code> match the valid proof cached in step 1, and use that proof's public key.</li>
+              <li>Strictly validate the algorithm, profile, signed-fields, header uniqueness, and formatting. The domain must match local policy. The path, model, and certificate fingerprint remain untrusted until signature verification succeeds.</li>
+              <li>Using the original request and response, apply the extractor for the path indicated in the header to reconstruct <code>request_fields</code> and <code>response_fields</code>, then combine them with header metadata to build the claims.</li>
+              <li>Apply RFC 8785 JCS to the claims, base64url-decode the 64-byte signature, and verify the payload using the attested Ed25519 public key.</li>
+              <li>After signature verification, enforce local allowlists for the path, model, and optional certificate pin. Check the timestamp window and atomically store the nonce in a persistent cache; reject duplicate nonces.</li>
             </ol>
-            <div class="callout"><span class="callout-icon">i</span><div><strong>多副本时按响应的 proof_ref 取证</strong><p>如果业务响应的 <code>X-Attestation-Proof-Ref</code> 与本地缓存不同，为它生成新的 challenge，并请求 <code>/.well-known/confidential-attestation?nonce=NEW_CHALLENGE&amp;proof_ref=RESPONSE_PROOF_REF</code>。仍须完整执行第 1 步的 Google token 和公钥绑定验证。</p></div></div>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export PROOF_CHALLENGE="$(openssl rand -hex 16)"
+            <div class="callout"><span class="callout-icon">i</span><div><strong>For multiple replicas, fetch the response's proof_ref</strong><p>If the response's <code>X-Attestation-Proof-Ref</code> differs from your local cache, generate a fresh challenge for it and request <code>/.well-known/confidential-attestation?nonce=NEW_CHALLENGE&amp;proof_ref=RESPONSE_PROOF_REF</code>. Still perform every Google token and public key binding check from step 1.</p></div></div>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export PROOF_CHALLENGE="$(openssl rand -hex 16)"
 export PROOF_REF="proof-FROM-RESPONSE-HEADER"
 
 curl --fail --silent --show-error --get \
@@ -194,20 +198,20 @@ curl --fail --silent --show-error --get \
   --data-urlencode "proof_ref=${PROOF_REF}" \
   --output confidential-attestation.json \
   "https://SERVICE_HOST/.well-known/confidential-attestation"</code></pre></div>
-            <h3>实际被签名的非流式内容</h3>
+            <h3>What is signed for non-streaming responses</h3>
             <ul>
-              <li>上游 HTTPS 叶子证书 SHA-256、上游域名与 request path；</li>
-              <li>实际 model；</li>
-              <li>请求与响应中的纯文本消息，包含角色、顺序、消息边界与文本；</li>
-              <li>协议版本、profile、key ID、时间戳和随机 nonce。</li>
+              <li>Upstream HTTPS leaf certificate SHA-256, upstream domain, and request path;</li>
+              <li>Actual model;</li>
+              <li>Plain-text request and response messages, including roles, order, message boundaries, and text;</li>
+              <li>Protocol version, profile, key ID, timestamp, and random nonce.</li>
             </ul>
-            <p>图片、文件、音频、工具定义/调用、推理过程、引用和 usage 不在 <code>llm-conversation-text-v1</code> 的证明范围内。</p>
+            <p>Images, files, audio, tool definitions/calls, reasoning, citations, and usage are outside the scope of <code>llm-conversation-text-v1</code>.</p>
           </section>
 
           <section id="stream">
-            <h2>流式请求：只证明“请求到达上游”</h2>
-            <p>OpenAI Chat Completions、OpenAI Responses 与 Anthropic Messages 的 <code>stream:true</code> 可以获得 <code>llm-request-upstream-v1</code>。客户必须为每次业务请求生成唯一的 10–74 位 URL-safe ASCII challenge，并通过业务服务约定的方式传递：</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export CHALLENGE="$(openssl rand -hex 16)"
+            <h2>Streaming: attest to the request reaching the upstream</h2>
+            <p>For OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages, <code>stream:true</code> requests can receive <code>llm-request-upstream-v1</code>. Customers must generate a unique 10–74 character URL-safe ASCII challenge per API request and pass it using the mechanism agreed with the service:</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export CHALLENGE="$(openssl rand -hex 16)"
 
 curl --no-buffer --dump-header stream.headers \
   "https://SERVICE_HOST/v1/chat/completions" \
@@ -216,70 +220,70 @@ curl --no-buffer --dump-header stream.headers \
   -H "X-Attestation-Challenge: ${CHALLENGE}" \
   --data '{
     "model": "APPROVED_MODEL",
-    "messages": [{"role": "user", "content": "你好"}],
+    "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'</code></pre></div>
-            <p>在读取第一个 SSE body 字节前，客户端应验证这些额外字段：</p>
+            <p>Before reading the first SSE body byte, the client should verify these additional fields:</p>
             <ul>
-              <li><code>X-Attestation-Profile</code> 必须为 <code>llm-request-upstream-v1</code>；</li>
-              <li>返回的 <code>X-Attestation-Challenge</code> 精确等于本次客户 challenge；</li>
-              <li><code>X-Attestation-Response-Status</code> 与响应状态一致；</li>
-              <li><code>X-Attestation-Response-Content-Type</code> 为规范化后的 <code>text/event-stream</code>；</li>
-              <li>签名覆盖 model、messages、<code>stream:true</code>、上游 TLS/域名/path、响应 metadata 与 challenge。</li>
+              <li><code>X-Attestation-Profile</code> must be <code>llm-request-upstream-v1</code>;</li>
+              <li>The returned <code>X-Attestation-Challenge</code> must exactly match this request's customer challenge;</li>
+              <li><code>X-Attestation-Response-Status</code> must match the response status;</li>
+              <li><code>X-Attestation-Response-Content-Type</code> must be the normalized <code>text/event-stream</code>;</li>
+              <li>The signature covers model, messages, <code>stream:true</code>, upstream TLS/domain/path, response metadata, and the challenge.</li>
             </ul>
-            <div class="callout warning"><span class="callout-icon">!</span><div><strong>流式 body 完全不在签名范围内</strong><p>中转层可以修改、替换或截断整个流而不导致该 profile 验签失败。产品必须把流式正文明确显示为“未证明”，不能使用“响应已验证”的笼统状态。</p></div></div>
-            <p>缺失、重复或非法 challenge 时，流仍可能正常透传，但不会生成证明 headers。当前 Bedrock 流式路径也只透传、不签名。</p>
+            <div class="callout warning"><span class="callout-icon">!</span><div><strong>The streaming body is entirely outside the signature scope</strong><p>A gateway can modify, replace, or truncate the entire stream without invalidating this profile's signature. The product must clearly mark the streaming body as unverified; a blanket “response verified” status is incorrect.</p></div></div>
+            <p>Missing, duplicated, or invalid challenges may still allow normal stream forwarding, but no attestation headers are generated. Bedrock streaming paths currently also pass through without signatures.</p>
           </section>
 
           <section id="production-client">
-            <h2>生产客户端必须做到什么</h2>
+            <h2>Requirements for production clients</h2>
             <ol>
-              <li><strong>策略与响应分离：</strong>issuer、audience、digest、实例、域名、path 和 model 必须来自本地策略。</li>
-              <li><strong>严格解析：</strong>拒绝重复 JSON key、重复或缺失 header、非法 base64url、异常 Unicode 和不支持的 profile。</li>
-              <li><strong>先验证再使用：</strong>Google token 验签前不信任证明包公钥；Ed25519 验签前不接受 header 中的 path/model 为事实。</li>
-              <li><strong>确定性重建：</strong>按对应 extractor 归一化角色、顺序、消息边界和文本，再使用 RFC 8785 JCS。</li>
-              <li><strong>防重放：</strong>限制 timestamp 最大年龄，并把已验证 nonce 原子写入持久化缓存；重复 nonce 直接失败。</li>
-              <li><strong>proof 缓存：</strong>按 <code>proof_ref</code> 缓存已验证公钥与过期时间；公钥轮换不能只看 key ID。</li>
-              <li><strong>失败可见：</strong>“未证明”“验证失败”“已验证请求但响应未证明”必须是三个不同状态。</li>
-              <li><strong>资源限制：</strong>对证明包、headers、JSON body、网络超时和 JWKS 缓存设置上限。</li>
+              <li><strong>Separate policy from responses:</strong> issuer, audience, digest, instances, domains, paths, and models must come from local policy.</li>
+              <li><strong>Parse strictly:</strong> reject duplicate JSON keys, duplicate or missing headers, invalid base64url, malformed Unicode, and unsupported profiles.</li>
+              <li><strong>Verify before trusting:</strong> do not trust a proof bundle's public key before verifying the Google token, or treat header paths/models as facts before Ed25519 verification.</li>
+              <li><strong>Reconstruct deterministically:</strong> normalize roles, order, message boundaries, and text using the corresponding extractor, then apply RFC 8785 JCS.</li>
+              <li><strong>Prevent replay:</strong> limit timestamp age and atomically store verified nonces in a persistent cache; fail on duplicate nonces.</li>
+              <li><strong>Cache proofs:</strong> cache by <code>proof_ref</code> with the verified public key and expiry. Do not identify key rotation using only the key ID.</li>
+              <li><strong>Make failures visible:</strong> distinguish “unverified”, “verification failed”, and “request verified, response unverified” as three separate states.</li>
+              <li><strong>Bound resources:</strong> limit proof bundles, headers, JSON bodies, network timeouts, and JWKS caches.</li>
             </ol>
-            <p>完整字段顺序、JCS claims 和各协议消息提取规则，以仓库中的 <a href="https://github.com/tokenevol/TrustedAIProxy/blob/main/docs/customer-verification-guide.md" target="_blank" rel="noreferrer">客户验证指南</a>与参考实现为准。</p>
+            <p>For full field ordering, JCS claims, and protocol-specific extraction rules, consult the repository's <a href="https://github.com/tokenevol/TrustedAIProxy/blob/main/docs/customer-verification-guide.md" target="_blank" rel="noreferrer">customer verification guide</a> and reference implementations.</p>
           </section>
 
           <section id="failures">
-            <h2>失败如何处理</h2>
+            <h2>Handling failures</h2>
             <table class="check-table">
-              <thead><tr><th>情况</th><th>客户端结论</th></tr></thead>
+              <thead><tr><th>Condition</th><th>Client conclusion</th></tr></thead>
               <tbody>
-                <tr><td>缺少任一必需 header</td><td>未证明；禁止显示验证通过。</td></tr>
-                <tr><td>Google token 签名/策略不匹配</td><td>环境不可信；丢弃公钥与该 proof。</td></tr>
-                <tr><td>Ed25519 签名不通过</td><td>内容或证明被改变；响应无效。</td></tr>
-                <tr><td>timestamp 超窗或 nonce 重复</td><td>可能重放；响应无效。</td></tr>
-                <tr><td>domain/path/model 不在本地允许策略</td><td>签名可以正确，但业务策略不接受。</td></tr>
-                <tr><td>证明端点 404</td><td>未知 <code>proof_ref</code>；不能建立信任。</td></tr>
-                <tr><td>证明端点 410</td><td>持有对应私钥的副本不在线；稍后重新发起业务请求。</td></tr>
-                <tr><td>证明端点 503</td><td>签发或跨副本路由临时失败；可以重试，但不能降级为已验证。</td></tr>
-                <tr><td>流式 request-upstream 验签通过</td><td>仅请求和上游 metadata 已证明；流式正文仍未证明。</td></tr>
+                <tr><td>Any required header is missing</td><td>Unverified; do not display verification success.</td></tr>
+                <tr><td>Google token signature or policy mismatch</td><td>Untrusted workload; discard the public key and proof.</td></tr>
+                <tr><td>Ed25519 signature verification fails</td><td>Content or proof has changed; the response is invalid.</td></tr>
+                <tr><td>Timestamp outside window or duplicate nonce</td><td>Possible replay; the response is invalid.</td></tr>
+                <tr><td>Domain/path/model not allowed by local policy</td><td>The signature may be valid, but business policy rejects it.</td></tr>
+                <tr><td>Proof endpoint returns 404</td><td>Unknown <code>proof_ref</code>; trust cannot be established.</td></tr>
+                <tr><td>Proof endpoint returns 410</td><td>The replica holding the private key is offline; send a new API request later.</td></tr>
+                <tr><td>Proof endpoint returns 503</td><td>Temporary issuance or cross-replica routing failure. Retry if appropriate, but never downgrade the check to verified.</td></tr>
+                <tr><td>Streaming request-upstream verification passes</td><td>Only the request and upstream metadata are attested; the streaming body remains unverified.</td></tr>
               </tbody>
             </table>
           </section>
 
           <section id="faq">
-            <h2>常见问题</h2>
-            <h3>我需要安装 MITM CA 吗？</h3>
-            <p>不需要。MITM CA 只存在于中转站到 TAP 的内部链路。最终用户通过正常 HTTPS 调用服务，并验证 Google attestation 与 Ed25519 签名。</p>
-            <h3>为什么不能直接信任服务方发来的公钥？</h3>
-            <p>因为服务方可以随时生成另一把密钥。你必须先验证 Google token 确认公钥绑定到批准的 Confidential Space 镜像与实例策略。</p>
-            <h3>Google attestation 每个请求都要获取吗？</h3>
-            <p>不需要。按 <code>proof_ref</code> 缓存已经验证的证明和公钥，直到 <code>expires_at</code>、公钥变化、workload 重启或本地策略更新。业务签名仍需逐条验证。</p>
-            <h3>验证通过就能证明一定调用了“正版模型”吗？</h3>
-            <p>它能证明 TAP 通过验证的 TLS 连接向指定上游域名/path 发送了签名覆盖的模型与消息，并观察到签名覆盖的回复文本。它不证明模型厂商内部的生成机制，也不覆盖 profile 之外的业务字段。</p>
-            <div class="doc-next"><div><strong>需要更底层的协议细节？</strong><span>阅读字段级客户验证指南与完整协议示例。</span></div><a class="button button-primary" href="https://github.com/tokenevol/TrustedAIProxy/blob/main/docs/customer-verification-guide.md" target="_blank" rel="noreferrer">查看客户验证指南</a></div>
+            <h2>Frequently asked questions</h2>
+            <h3>Do I need to install the MITM CA?</h3>
+            <p>No. The MITM CA is used only on the internal link from the gateway to TAP. End users call the service over normal HTTPS and verify the Google attestation and Ed25519 signatures.</p>
+            <h3>Why can't I trust the public key supplied by the service directly?</h3>
+            <p>The service could generate another key at any time. First verify the Google token to confirm that the public key is bound to the approved Confidential Space image and instance policy.</p>
+            <h3>Do I need a Google attestation for every request?</h3>
+            <p>No. Use <code>proof_ref</code> to cache verified proofs and public keys until <code>expires_at</code>, a public key change, workload restart, or local policy update. Each API signature still needs independent verification.</p>
+            <h3>Does successful verification prove that the “genuine model” was used?</h3>
+            <p>It proves that TAP sent the signed model and messages to the specified upstream domain/path over verified TLS and observed the signed response text. It does not prove the provider's internal generation process or cover business fields outside the profile.</p>
+            <div class="doc-next"><div><strong>Need protocol-level details?</strong><span>Read the field-level customer verification guide and complete protocol examples.</span></div><a class="button button-primary" href="https://github.com/tokenevol/TrustedAIProxy/blob/main/docs/customer-verification-guide.md" target="_blank" rel="noreferrer">Open the customer verification guide</a></div>
           </section>
         </article>
       </div>
     </main>
 
-    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 TokenEvol Inc.</span><span><a href="index.html">返回首页</a> · <a href="deploy.html">部署指南</a></span></div></footer>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 TokenEvol Inc.</span><span><a href="index.html">Back to home</a> · <a href="deploy.html">Deploy guide</a></span></div></footer>
   </body>
 </html>

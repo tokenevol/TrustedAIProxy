@@ -2,6 +2,7 @@
 .gitignore
 Dockerfile
 README.md
+README.zh-CN.md
 deploy
 website
 *.pem

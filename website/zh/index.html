@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="TrustedAIProxy 为 AI 中转服务提供可独立验证的请求与响应证明。基于 Google Confidential Space、Ed25519 与经过验证的上游 TLS。"
+    />
+    <link rel="alternate" hreflang="en" href="../index.html" />
+    <link rel="alternate" hreflang="zh-CN" href="index.html" />
+    <link rel="alternate" hreflang="x-default" href="../index.html" />
+    <meta name="theme-color" content="#07110f" />
+    <meta property="og:title" content="TrustedAIProxy｜让 AI 转发留下可验证的证据" />
+    <meta
+      property="og:description"
+      content="不是要求用户相信，而是让用户亲自验证。"
+    />
+    <title>TrustedAIProxy｜可信 AI 转发证明</title>
+    <script>document.documentElement.classList.add("js")</script>
+    <link rel="stylesheet" href="../assets/styles.css" />
+    <script defer src="../assets/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header" data-header>
+      <div class="shell header-inner">
+        <a class="brand" href="index.html" aria-label="TrustedAIProxy 首页">
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M20 3 34 9v10c0 9.2-5.7 14.8-14 18-8.3-3.2-14-8.8-14-18V9l14-6Z" />
+            <path d="m13.5 20.2 4.2 4.2 9-9" />
+          </svg>
+          <span>Trusted<span>AI</span>Proxy</span>
+        </a>
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#principle">技术原理</a>
+          <a href="#verification">验证过程</a>
+          <a href="#scope">证明边界</a>
+        </nav>
+        <div class="header-actions">
+          <a class="language-switch" href="../index.html" lang="en" hreflang="en" aria-label="Switch to English" data-language-switch>EN</a>
+          <a class="text-link desktop-only" href="user-guide.html">用户指南</a>
+          <a class="button button-small button-light" href="deploy.html">部署指南</a>
+          <button class="menu-button" type="button" aria-label="打开菜单" aria-expanded="false" data-menu-button>
+            <span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <nav class="mobile-nav" aria-label="移动端导航" data-mobile-nav>
+        <a href="#principle">技术原理</a>
+        <a href="#verification">验证过程</a>
+        <a href="#scope">证明边界</a>
+        <a href="user-guide.html">用户指南</a>
+        <a href="deploy.html">Google Cloud 部署</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-media" aria-hidden="true"></div>
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="shell hero-inner">
+          <div class="hero-copy reveal">
+            <div class="eyebrow"><span class="live-dot"></span> 可验证的 AI 中转信任层</div>
+            <h1>让每一次 AI 转发，<br /><em>都留下可验证的证据</em></h1>
+            <p>
+              TrustedAIProxy 在中转站与模型厂商之间观察真实流量，绑定已验证的上游 TLS，
+              并由 Google Confidential Space 中的 Ed25519 密钥签名。
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#verification">查看验证过程</a>
+              <a class="button button-ghost" href="https://github.com/tokenevol/TrustedAIProxy" target="_blank" rel="noreferrer">
+                查看 GitHub
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 14 14 6m-6 0h6v6" /></svg>
+              </a>
+            </div>
+            <div class="hero-note">
+              <span class="mini-shield" aria-hidden="true">✓</span>
+              用户无需安装 MITM CA，也无需直接连接内部代理
+            </div>
+          </div>
+
+          <div class="proof-card reveal reveal-delay" aria-label="验签成功示例">
+            <div class="proof-card-top">
+              <div class="proof-card-title"><span></span> Attestation verified</div>
+              <div class="proof-card-time">刚刚</div>
+            </div>
+            <div class="proof-status">
+              <div class="proof-check">✓</div>
+              <div>
+                <strong>证明链完整</strong>
+                <small>trusted-ai-proxy-v1</small>
+              </div>
+            </div>
+            <dl class="proof-fields">
+              <div><dt>运行环境</dt><dd><span class="verified-dot"></span> Confidential Space</dd></div>
+              <div><dt>签名算法</dt><dd>Ed25519</dd></div>
+              <div><dt>上游域名</dt><dd>api.openai.com</dd></div>
+              <div><dt>签名范围</dt><dd>请求 + 响应文本</dd></div>
+            </dl>
+            <div class="proof-hash">
+              <span>proof_ref</span>
+              <code>proof-J4vLQ0p…cY9Q</code>
+            </div>
+          </div>
+        </div>
+        <div class="shell trust-strip" aria-label="核心技术">
+          <div><span>01</span><strong>Google Confidential Space</strong><small>运行环境证明</small></div>
+          <div><span>02</span><strong>Ed25519</strong><small>内容签名</small></div>
+          <div><span>03</span><strong>RFC 8785 · JCS</strong><small>确定性载荷</small></div>
+          <div><span>04</span><strong>Verified upstream TLS</strong><small>上游身份绑定</small></div>
+        </div>
+      </section>
+
+      <section class="section problem-section">
+        <div class="shell">
+          <div class="section-heading narrow reveal">
+            <div class="kicker">WHY TRUSTED AI PROXY</div>
+            <h2>信任，不应该只是一句承诺</h2>
+            <p>HTTPS 只能证明用户连接到了中转站，却无法回答中转站之后发生了什么。</p>
+          </div>
+          <div class="problem-grid">
+            <article class="problem-card muted reveal">
+              <div class="card-label">普通中转</div>
+              <div class="uncertain-path">
+                <span>用户请求</span><i></i><b>?</b><i></i><span>模型厂商</span>
+              </div>
+              <h3>只能相信平台的自我声明</h3>
+              <ul class="cross-list">
+                <li>模型是否被替换？</li>
+                <li>提示词是否被增删？</li>
+                <li>回复是否被二次改写？</li>
+              </ul>
+            </article>
+            <article class="problem-card trusted reveal reveal-delay">
+              <div class="card-label">接入 TrustedAIProxy</div>
+              <div class="certain-path">
+                <span>真实流量</span><i></i><b>✓</b><i></i><span>密码学证据</span>
+              </div>
+              <h3>把“请相信我”变成“你可以验证”</h3>
+              <ul class="check-list">
+                <li>证明真实上游域名与 TLS 证书</li>
+                <li>证明实际模型、路径与消息顺序</li>
+                <li>证明可批准的机密计算工作负载</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section architecture-section" id="principle">
+        <div class="shell">
+          <div class="section-heading split-heading reveal">
+            <div>
+              <div class="kicker">HOW IT WORKS</div>
+              <h2>证据在真实流量路径上产生</h2>
+            </div>
+            <p>
+              TAP 不是旁路日志，也不是事后生成的证明。它位于中转站出口，正常校验模型厂商 TLS，
+              只对完整、可确定解析的协议语义签名。
+            </p>
+          </div>
+
+          <div class="architecture-panel reveal">
+            <div class="arch-node">
+              <div class="node-icon user-icon" aria-hidden="true"><span></span></div>
+              <strong>最终用户</strong><small>正常 HTTPS 调用</small>
+            </div>
+            <div class="arch-link"><span>请求</span><i></i></div>
+            <div class="arch-node">
+              <div class="node-icon gateway-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+              <strong>AI 中转站</strong><small>New API / One API</small>
+            </div>
+            <div class="arch-link active"><span>内部代理</span><i></i></div>
+            <div class="arch-node tap-node">
+              <div class="confidential-tag">CONFIDENTIAL SPACE</div>
+              <div class="node-icon tap-icon" aria-hidden="true">T</div>
+              <strong>TrustedAIProxy</strong><small>观察 · 归一化 · 签名</small>
+            </div>
+            <div class="arch-link active"><span>已验证 TLS</span><i></i></div>
+            <div class="arch-node">
+              <div class="node-icon cloud-icon" aria-hidden="true"><span></span></div>
+              <strong>模型厂商</strong><small>OpenAI / Anthropic / Bedrock</small>
+            </div>
+          </div>
+
+          <div class="principle-steps">
+            <article class="principle-step reveal"><span>01</span><h3>观察真实交互</h3><p>中转站通过 HTTP(S) Proxy 将上游流量交给 TAP；出站 TLS 仍进行域名与证书链校验。</p></article>
+            <article class="principle-step reveal"><span>02</span><h3>提取协议语义</h3><p>不同厂商协议被归一成稳定的 model 与有序 messages；歧义、超限或不支持的内容不签名。</p></article>
+            <article class="principle-step reveal"><span>03</span><h3>形成确定载荷</h3><p>上游证书指纹、域名、路径和消息按 RFC 8785 JCS 规范化，得到可重复重建的 claims。</p></article>
+            <article class="principle-step reveal"><span>04</span><h3>附加签名证明</h3><p>工作负载密钥生成 Ed25519 签名与 proof_ref，业务响应 body 保持不变，证明通过 headers 返回。</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section verification-section" id="verification">
+        <div class="shell verification-layout">
+          <div class="verification-intro reveal">
+            <div class="kicker">VERIFY, DON’T ASSUME</div>
+            <h2>从 Google 环境证明，到每一条响应验签</h2>
+            <p>信任链分成两层。环境证明按公钥或 workload 生命周期缓存，业务响应则逐条验证并检查重放。</p>
+            <div class="profile-switch" role="tablist" aria-label="证明类型">
+              <button class="active" type="button" role="tab" aria-selected="true" data-profile="conversation">非流式响应</button>
+              <button type="button" role="tab" aria-selected="false" data-profile="stream">流式请求</button>
+            </div>
+            <div class="profile-note" data-profile-note>
+              <strong>llm-conversation-text-v1</strong>
+              <span>覆盖请求与响应的纯文本消息</span>
+            </div>
+          </div>
+
+          <ol class="verification-timeline">
+            <li class="reveal">
+              <span>1</span>
+              <div><small>响应优先</small><h3>读取证明引用</h3><p>从业务响应提取 <code>X-Attestation-Proof-Ref</code>；本地无有效缓存时再获取证明包。</p></div>
+            </li>
+            <li class="reveal">
+              <span>2</span>
+              <div><small>客户发起</small><h3>用一次性 challenge 获取环境证明</h3><p>调用 <code>/.well-known/confidential-attestation</code>，challenge 必须由客户生成且每次唯一。</p></div>
+            </li>
+            <li class="reveal">
+              <span>3</span>
+              <div><small>Google 信任根</small><h3>验证 OIDC token 与 workload 策略</h3><p>校验签名、issuer、audience、时效、镜像 digest、项目、实例、服务账号、硬件与 Secure Boot。</p></div>
+            </li>
+            <li class="reveal">
+              <span>4</span>
+              <div><small>密钥绑定</small><h3>确认 Ed25519 公钥属于该 workload</h3><p>重算公钥 binding nonce，并确认 Google token 的 <code>eat_nonce</code> 同时绑定 challenge 和公钥。</p></div>
+            </li>
+            <li class="reveal">
+              <span>5</span>
+              <div><small>逐条响应</small><h3>重建 claims 并验签</h3><p>按 profile 归一化请求和响应，进行 JCS 编码、Ed25519 验签、路由/模型策略与 nonce 防重放检查。</p></div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="evidence-section">
+        <div class="shell evidence-grid">
+          <div class="evidence-copy reveal">
+            <div class="kicker">EVIDENCE, NOT LOGS</div>
+            <h2>每一项关键事实，都在签名范围内明确列出</h2>
+            <p>验证方不从展示页面“读取结论”，而是按照公开协议重建同一份签名载荷。</p>
+            <a class="inline-link" href="user-guide.html">阅读完整用户验签指南 <span>→</span></a>
+          </div>
+          <div class="claims-window reveal reveal-delay">
+            <div class="window-bar"><span></span><span></span><span></span><small>canonical-claims.json</small></div>
+            <pre><code><span class="c-dim">{</span>
+  <span class="c-key">"version"</span>: <span class="c-value">"trusted-ai-proxy-v1"</span>,
+  <span class="c-key">"profile"</span>: <span class="c-value">"llm-conversation-text-v1"</span>,
+  <span class="c-key">"tls_certificate_sha256"</span>: <span class="c-value">"8f9a…d21e"</span>,
+  <span class="c-key">"domain"</span>: <span class="c-value">"api.openai.com"</span>,
+  <span class="c-key">"request_path"</span>: <span class="c-value">"/v1/chat/completions"</span>,
+  <span class="c-key">"request_fields"</span>: [<span class="c-value">"model"</span>, <span class="c-value">"messages"</span>],
+  <span class="c-key">"response_fields"</span>: [<span class="c-value">"messages"</span>],
+  <span class="c-key">"timestamp"</span>: <span class="c-num">1787749200</span>,
+  <span class="c-key">"nonce"</span>: <span class="c-value">"R6I8…F0qw"</span>
+<span class="c-dim">}</span></code></pre>
+            <div class="window-status"><span>✓</span> RFC 8785 canonicalized <i></i> Ed25519 valid</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section scope-section" id="scope">
+        <div class="shell">
+          <div class="section-heading narrow reveal">
+            <div class="kicker">CLEAR TRUST BOUNDARY</div>
+            <h2>专业可靠，也意味着清楚说明边界</h2>
+            <p>签名只能证明 profile 明确覆盖的事实。没有被签名的字段，不能从证明中推导。</p>
+          </div>
+          <div class="scope-grid">
+            <article class="scope-card can reveal">
+              <div class="scope-title"><span>✓</span><div><small>NON-STREAMING</small><h3>可以证明</h3></div></div>
+              <ul>
+                <li><strong>上游身份</strong><span>域名与 HTTPS 叶子证书指纹</span></li>
+                <li><strong>调用事实</strong><span>请求 path 与实际模型</span></li>
+                <li><strong>文本完整性</strong><span>角色、顺序、消息边界与文本</span></li>
+                <li><strong>签名来源</strong><span>批准的 Confidential Space workload</span></li>
+              </ul>
+            </article>
+            <article class="scope-card cannot reveal reveal-delay">
+              <div class="scope-title"><span>—</span><div><small>OUT OF PROFILE</small><h3>当前不能证明</h3></div></div>
+              <ul>
+                <li><strong>多模态内容</strong><span>图片、文件、音频与工具调用</span></li>
+                <li><strong>模型内部</strong><span>推理过程及厂商内部生成机制</span></li>
+                <li><strong>业务行为</strong><span>中转站计费、可用性与未覆盖字段</span></li>
+                <li><strong>流式响应正文</strong><span>当前流式 profile 只证明请求与上游 metadata</span></li>
+              </ul>
+            </article>
+          </div>
+          <div class="stream-warning reveal">
+            <div class="warning-mark">!</div>
+            <div><strong>关于流式响应</strong><p><code>llm-request-upstream-v1</code> 证明请求已到达指定上游及其响应 metadata，但不覆盖任何 SSE 事件或流式正文。客户端必须将流式内容标记为“未证明”。</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section support-section">
+        <div class="shell support-layout">
+          <div class="support-copy reveal">
+            <div class="kicker">PROTOCOL COVERAGE</div>
+            <h2>一个信任层，连接主流模型协议</h2>
+            <p>不同厂商的消息格式由版本化提取器处理，并归一成公开、可重建的签名语义。</p>
+          </div>
+          <div class="support-table reveal reveal-delay">
+            <div class="support-row header-row"><span>接口</span><span>提取器</span><span>状态</span></div>
+            <div class="support-row"><span>OpenAI Chat Completions</span><code>openai-chat-conversation-v1</code><b>已支持</b></div>
+            <div class="support-row"><span>OpenAI Responses</span><code>openai-responses-conversation-v1</code><b>已支持</b></div>
+            <div class="support-row"><span>Anthropic Messages</span><code>anthropic-messages-conversation-v1</code><b>已支持</b></div>
+            <div class="support-row"><span>AWS Bedrock Invoke</span><code>bedrock-invoke-conversation-v1</code><b>已支持</b></div>
+            <div class="support-row"><span>AWS Bedrock Converse</span><code>bedrock-converse-conversation-v1</code><b>已支持</b></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-section">
+        <div class="shell cta-panel reveal">
+          <div class="cta-glow" aria-hidden="true"></div>
+          <div>
+            <div class="kicker">START WITH EVIDENCE</div>
+            <h2>把可信，做成用户能验证的产品能力</h2>
+            <p>先在本地理解签名流程，再部署到 Google Confidential Space，最后把验证策略交付给用户。</p>
+          </div>
+          <div class="cta-links">
+            <a class="button button-primary" href="deploy.html">Google Cloud 部署</a>
+            <a class="button button-ghost" href="user-guide.html">阅读用户指南</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-main">
+        <div class="footer-brand">
+          <a class="brand" href="index.html">
+            <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34 9v10c0 9.2-5.7 14.8-14 18-8.3-3.2-14-8.8-14-18V9l14-6Z" /><path d="m13.5 20.2 4.2 4.2 9-9" /></svg>
+            <span>Trusted<span>AI</span>Proxy</span>
+          </a>
+          <p>面向 AI 中转服务的可验证代理签名层。</p>
+        </div>
+        <div class="footer-links"><strong>了解产品</strong><a href="#principle">技术原理</a><a href="#verification">验证过程</a><a href="#scope">证明边界</a></div>
+        <div class="footer-links"><strong>文档</strong><a href="deploy.html">Google Cloud 部署</a><a href="user-guide.html">用户使用指南</a><a href="https://github.com/tokenevol/TrustedAIProxy/blob/main/docs/customer-verification-guide.md" target="_blank" rel="noreferrer">协议验证指南</a></div>
+        <div class="footer-links"><strong>项目</strong><a href="https://github.com/tokenevol/TrustedAIProxy" target="_blank" rel="noreferrer">GitHub</a><a href="mailto:business@tokenevol.com">技术支持</a><a href="https://github.com/tokenevol/TrustedAIProxy/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></div>
+      </div>
+      <div class="shell footer-bottom"><span>© 2026 TokenEvol Inc.</span><span>Proof over promise.</span></div>
+    </footer>
+  </body>
+</html>

@@ -1,27 +1,33 @@
 # TrustedAIProxy website
 
-静态产品站点，包含：
+A static product website with English as the default language:
 
-- `index.html`：主页、技术原理、验证流程、优势与证明边界；
-- `deploy.html`：Google Confidential Space 部署指南；
-- `user-guide.html`：最终用户使用与独立验签指南。
+| Page | English | Simplified Chinese |
+| --- | --- | --- |
+| Home, architecture, verification, and proof scope | `index.html` | `zh/index.html` |
+| Google Confidential Space deployment | `deploy.html` | `zh/deploy.html` |
+| End-user verification | `user-guide.html` | `zh/user-guide.html` |
 
-## 本地预览
+The header language switch opens the equivalent page. All internal navigation stays in the selected language. Language links work without JavaScript; when JavaScript is available, switching also preserves the current section anchor. Locale URLs are explicit and shareable; there is no browser-language redirect or local-storage dependency.
+
+## Local preview
 
 ```sh
 python3 -m http.server 4173 --directory website
 ```
 
-打开 <http://127.0.0.1:4173/>。
+Open <http://127.0.0.1:4173/> for English or <http://127.0.0.1:4173/zh/> for Chinese.
 
-站点不依赖 Node.js 或外部 CDN，可以直接部署到任意静态托管服务。主视觉原图和 Web 优化版本位于 `assets/trust-boundary-hero.png` 与 `assets/trust-boundary-hero.webp`。
+The site needs no build step, Node.js runtime, or external CDN. Deploy the entire directory to any static host. The original hero image and web-optimized version are `assets/trust-boundary-hero.png` and `assets/trust-boundary-hero.webp`.
 
-## 内容边界
+## Maintaining both languages
 
-主页和文档按当前仓库的 `trusted-ai-proxy-v1`、`llm-conversation-text-v1` 与 `llm-request-upstream-v1` 语义编写。协议或部署行为变化时，应同步更新：
+Keep section IDs and code examples aligned across each page pair. Update page titles, descriptions, accessibility labels, and navigation alongside visible text. Shared interaction text (menu labels, profile descriptions, and clipboard feedback) is localized in `assets/site.js` using the document's `lang` attribute. Shared CSS and JavaScript are referenced with `../assets/` from Chinese pages.
 
-- `README.md`；
-- `docs/customer-verification-guide.md`；
-- `website/index.html`；
-- `website/deploy.html`；
-- `website/user-guide.html`。
+The content follows the repository's current `trusted-ai-proxy-v1`, `llm-conversation-text-v1`, and `llm-request-upstream-v1` semantics. When protocol or deployment behavior changes, update:
+
+- `README.md` and `README.zh-CN.md`;
+- `docs/customer-verification-guide.md`;
+- Both language versions of `index.html`, `deploy.html`, and `user-guide.html`.
+
+The streaming profile authenticates only the request and upstream response metadata. Both languages must explicitly state that the streaming response body remains unverified.

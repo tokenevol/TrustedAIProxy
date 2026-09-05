@@ -1,82 +1,86 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="TrustedAIProxy 在 Google Confidential Space 上的部署指南，覆盖 IAM、网络、不可变镜像、Secret Manager、测试与生产验收。" />
+    <meta name="description" content="Deploy TrustedAIProxy on Google Confidential Space: IAM, networking, immutable images, Secret Manager, testing, and production acceptance." />
+    <link rel="alternate" hreflang="en" href="deploy.html" />
+    <link rel="alternate" hreflang="zh-CN" href="zh/deploy.html" />
+    <link rel="alternate" hreflang="x-default" href="deploy.html" />
     <meta name="theme-color" content="#07110f" />
-    <title>Google Cloud 部署指南｜TrustedAIProxy</title>
+    <title>Google Cloud Deployment Guide | TrustedAIProxy</title>
     <script>document.documentElement.classList.add("js")</script>
     <link rel="stylesheet" href="assets/styles.css" />
     <script defer src="assets/site.js"></script>
   </head>
   <body class="docs-body">
-    <a class="skip-link" href="#content">跳到文档内容</a>
+    <a class="skip-link" href="#content">Skip to documentation</a>
     <header class="site-header scrolled" data-header>
       <div class="shell header-inner">
-        <a class="brand" href="index.html" aria-label="TrustedAIProxy 首页">
+        <a class="brand" href="index.html" aria-label="TrustedAIProxy home">
           <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3 34 9v10c0 9.2-5.7 14.8-14 18-8.3-3.2-14-8.8-14-18V9l14-6Z" /><path d="m13.5 20.2 4.2 4.2 9-9" /></svg>
           <span>Trusted<span>AI</span>Proxy</span>
         </a>
-        <nav class="desktop-nav" aria-label="主导航"><a href="index.html#principle">技术原理</a><a href="index.html#verification">验证过程</a><a href="index.html#scope">证明边界</a></nav>
+        <nav class="desktop-nav" aria-label="Main navigation"><a href="index.html#principle">How it works</a><a href="index.html#verification">Verification</a><a href="index.html#scope">Proof scope</a></nav>
         <div class="header-actions">
-          <a class="text-link desktop-only" href="user-guide.html">用户指南</a>
+          <a class="language-switch" href="zh/deploy.html" lang="zh-CN" hreflang="zh-CN" aria-label="切换到中文" data-language-switch>中文</a>
+          <a class="text-link desktop-only" href="user-guide.html">User guide</a>
           <a class="button button-small button-light" href="https://github.com/tokenevol/TrustedAIProxy" target="_blank" rel="noreferrer">GitHub</a>
-          <button class="menu-button" type="button" aria-label="打开菜单" aria-expanded="false" data-menu-button><span></span><span></span></button>
+          <button class="menu-button" type="button" aria-label="Open menu" aria-expanded="false" data-menu-button><span></span><span></span></button>
         </div>
       </div>
-      <nav class="mobile-nav" aria-label="移动端导航" data-mobile-nav><a href="index.html">首页</a><a href="index.html#principle">技术原理</a><a href="index.html#scope">证明边界</a><a href="user-guide.html">用户指南</a><a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></nav>
+      <nav class="mobile-nav" aria-label="Mobile navigation" data-mobile-nav><a href="index.html">Home</a><a href="index.html#principle">How it works</a><a href="index.html#scope">Proof scope</a><a href="user-guide.html">User guide</a><a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></nav>
     </header>
 
     <main>
       <section class="docs-hero">
         <div class="shell">
-          <div class="breadcrumbs"><a href="index.html">首页</a><span>/</span><span>部署文档</span></div>
-          <h1>在 Google Confidential Space 上部署</h1>
-          <p>从项目与 IAM 到私有网络、预构建镜像、中转站接入和客户验收策略，按步骤完成部署。</p>
-          <div class="docs-meta"><span>适用于：项目 main 分支当前实现</span><span>核对日期：2026-08-27</span><span>预计：45–90 分钟</span></div>
+          <div class="breadcrumbs"><a href="index.html">Home</a><span>/</span><span>Deployment docs</span></div>
+          <h1>Deploy on Google Confidential Space</h1>
+          <p>Follow the steps from project setup and IAM to private networking, prebuilt images, gateway integration, and customer acceptance policies.</p>
+          <div class="docs-meta"><span>Applies to: current main branch implementation</span><span>Reviewed: 2026-08-27</span><span>Estimated time: 45–90 minutes</span></div>
         </div>
       </section>
 
       <div class="shell docs-shell">
         <aside class="docs-sidebar">
-          <strong>本页目录</strong>
-          <nav aria-label="文档目录">
-            <a href="#before">部署前必读</a>
-            <a href="#variables">1. 设置变量</a>
-            <a href="#apis">2. 启用 API</a>
-            <a href="#identity">3. 创建身份</a>
-            <a href="#image">4. 使用预构建镜像</a>
-            <a href="#network">5. 配置私有网络</a>
-            <a href="#secrets">6. 准备 Secret</a>
-            <a href="#test">7. 测试部署</a>
-            <a href="#production">8. 生产部署</a>
-            <a href="#gateway">9. 接入中转站</a>
-            <a href="#acceptance">10. 验收清单</a>
-            <a href="#troubleshooting">故障排查</a>
+          <strong>On this page</strong>
+          <nav aria-label="Documentation contents">
+            <a href="#before">Before you deploy</a>
+            <a href="#variables">1. Set variables</a>
+            <a href="#apis">2. Enable APIs</a>
+            <a href="#identity">3. Create an identity</a>
+            <a href="#image">4. Use a prebuilt image</a>
+            <a href="#network">5. Set up private networking</a>
+            <a href="#secrets">6. Prepare secrets</a>
+            <a href="#test">7. Test deployment</a>
+            <a href="#production">8. Production deployment</a>
+            <a href="#gateway">9. Connect your gateway</a>
+            <a href="#acceptance">10. Acceptance checklist</a>
+            <a href="#troubleshooting">Troubleshooting</a>
           </nav>
-          <div class="sidebar-card"><small>NEXT</small><strong>让最终用户完成独立验签</strong><a href="user-guide.html">阅读用户指南 →</a></div>
+          <div class="sidebar-card"><small>NEXT</small><strong>Help customers verify independently</strong><a href="user-guide.html">Read the user guide →</a></div>
         </aside>
 
         <article class="docs-content" id="content">
           <section id="before">
-            <h2>部署前必读</h2>
-            <p>TrustedAIProxy 运行在中转站出口，代理端口只允许内部调用方访问。最终用户不连接代理、不安装内部 MITM CA；他们通过业务响应 headers 和客户可访问的证明端点建立信任。</p>
-            <h3>你需要</h3>
+            <h2>Before you deploy</h2>
+            <p>TrustedAIProxy runs at the gateway's egress. Only internal callers should reach its proxy port. End users do not connect to the proxy or install its internal MITM CA; they establish trust through response headers and a customer-accessible proof endpoint.</p>
+            <h3>What you need</h3>
             <ul>
-              <li>一个启用结算的 Google Cloud 项目和已登录的 <code>gcloud</code> CLI；</li>
-              <li>可以创建 Compute Engine、VPC、防火墙、服务账号和 Secret Manager 资源的权限；</li>
-              <li>能够从 GHCR 拉取本文指定的 TrustedAIProxy 不可变镜像；</li>
-              <li>New API / One API 等中转服务与 TAP 的内部网络连通性；</li>
-              <li>客户批准的项目、实例、镜像 digest、上游和证明策略。</li>
+              <li>A Google Cloud project with billing enabled and an authenticated <code>gcloud</code> CLI;</li>
+              <li>Permissions to create Compute Engine, VPC, firewall, service account, and Secret Manager resources;</li>
+              <li>Access to pull the immutable TrustedAIProxy image specified here from GHCR;</li>
+              <li>Internal network connectivity between TAP and a gateway such as New API / One API;</li>
+              <li>Customer-approved project, instance, image digest, upstream, and attestation policies.</li>
             </ul>
-            <p>Google 官方参考：<a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/deploy-workloads" target="_blank" rel="noreferrer">部署 Confidential Space workload</a>、<a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-images" target="_blank" rel="noreferrer">镜像类型与生命周期</a>、<a href="https://docs.cloud.google.com/confidential-computing/confidential-vm/docs/supported-configurations" target="_blank" rel="noreferrer">硬件与区域支持</a>。</p>
+            <p>Official Google references: <a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/deploy-workloads" target="_blank" rel="noreferrer">Deploy Confidential Space workloads</a>, <a href="https://docs.cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-images" target="_blank" rel="noreferrer">Image types and lifecycle</a>, <a href="https://docs.cloud.google.com/confidential-computing/confidential-vm/docs/supported-configurations" target="_blank" rel="noreferrer">Supported hardware and regions</a>.</p>
           </section>
 
           <section id="variables">
-            <div class="step-heading"><span class="step-number">1</span><h2>设置部署变量</h2></div>
-            <p>示例使用 AMD SEV 与 <code>n2d-standard-2</code>。先确认所选 zone 支持对应 CPU；若改用 TDX，机型、zone 和客户允许的 <code>hwmodel</code> 必须一起更新。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export PROJECT_ID="your-project"
+            <div class="step-heading"><span class="step-number">1</span><h2>Set deployment variables</h2></div>
+            <p>This example uses AMD SEV with <code>n2d-standard-2</code>. First confirm that your zone supports the CPU. If you switch to TDX, update the machine type, zone, and customer-approved <code>hwmodel</code> together.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export PROJECT_ID="your-project"
 export REGION="us-central1"
 export ZONE="us-central1-a"
 export INSTANCE_NAME="tap-01"
@@ -92,24 +96,24 @@ export IMAGE="ghcr.io/tokenevol/trustedaiproxy@sha256:8271352838ac4db3647b4b028f
 gcloud config set project "${PROJECT_ID}"
 gcloud compute zones describe "${ZONE}" \
   --format="value(availableCpuPlatforms)"</code></pre></div>
-            <div class="callout"><span class="callout-icon">i</span><div><strong>替换环境占位符</strong><p>需要替换 <code>PROJECT_ID</code>、zone 和调用方 CIDR；<code>IMAGE</code> 已固定为可直接拉取的版本。部署后这些值还要作为客户带外策略的一部分交付。</p></div></div>
+            <div class="callout"><span class="callout-icon">i</span><div><strong>Replace environment placeholders</strong><p>Replace <code>PROJECT_ID</code>, the zone, and the caller CIDR;<code>IMAGE</code> is already pinned to a pullable version. Deliver these values as part of the customer's out-of-band policy after deployment.</p></div></div>
           </section>
 
           <section id="apis">
-            <div class="step-heading"><span class="step-number">2</span><h2>启用所需 API</h2></div>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud services enable \
+            <div class="step-heading"><span class="step-number">2</span><h2>Enable the required APIs</h2></div>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud services enable \
   compute.googleapis.com \
   confidentialcomputing.googleapis.com \
   iam.googleapis.com \
   logging.googleapis.com \
   secretmanager.googleapis.com</code></pre></div>
-            <p>本文直接使用公开 GHCR 镜像，不需要启用 Artifact Registry，也不需要为拉取镜像配置额外的 Registry IAM 权限。</p>
+            <p>This guide uses a public GHCR image directly. You do not need Artifact Registry or additional registry IAM permissions to pull it.</p>
           </section>
 
           <section id="identity">
-            <div class="step-heading"><span class="step-number">3</span><h2>创建 workload 身份</h2></div>
-            <p>VM 附加的服务账号需要请求 Confidential Space attestation token。日志权限只用于测试诊断；生产镜像默认不应重定向业务日志。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
+            <div class="step-heading"><span class="step-number">3</span><h2>Create a workload identity</h2></div>
+            <p>The VM's service account must be able to request Confidential Space attestation tokens. Logging permissions are for test diagnostics; production images should not redirect application logs by default.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
   --display-name="TrustedAIProxy Confidential Space workload"
 
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
@@ -123,20 +127,20 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT}" \
   --member="user:$(gcloud config get-value account)" \
   --role="roles/iam.serviceAccountUser"</code></pre></div>
-            <p>生产中遵循最小权限：若不写 Cloud Logging，可移除 <code>logging.logWriter</code>；Secret Manager 的读取权限应绑定到单个 secret，而不是整个项目。</p>
+            <p>Apply least privilege in production: remove <code>logging.logWriter</code> if you do not write to Cloud Logging. Grant Secret Manager read access to individual secrets, rather than the entire project.</p>
           </section>
 
           <section id="image">
-            <div class="step-heading"><span class="step-number">4</span><h2>使用已发布的不可变镜像</h2></div>
-            <p>无需自行构建或发布镜像。直接使用 GitHub 仓库已经发布到 GHCR 的固定 digest：</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export IMAGE="ghcr.io/tokenevol/trustedaiproxy@sha256:8271352838ac4db3647b4b028f6f6ddd67266d4a0114ada49db3980e5ed331ea"</code></pre></div>
-            <p>固定 digest 可以避免 tag 更新后静默切换代码。客户验证策略中的 image digest 必须与这里的值完全一致。</p>
+            <div class="step-heading"><span class="step-number">4</span><h2>Use a published immutable image</h2></div>
+            <p>You do not need to build or publish an image yourself. Use the fixed digest already published to GHCR by this repository:</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export IMAGE="ghcr.io/tokenevol/trustedaiproxy@sha256:8271352838ac4db3647b4b028f6f6ddd67266d4a0114ada49db3980e5ed331ea"</code></pre></div>
+            <p>Pinning a digest prevents silent code changes when a tag moves. The image digest in the customer's verification policy must match this value exactly.</p>
           </section>
 
           <section id="network">
-            <div class="step-heading"><span class="step-number">5</span><h2>配置私有网络与受限入口</h2></div>
-            <p>以下示例创建自定义 VPC、私有子网和 Cloud NAT。VM 没有公网 IP，但可以拉取公开镜像并访问模型厂商。仅允许中转站所在 CIDR 访问 TAP 的 <code>8080/tcp</code>。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud compute networks create "${NETWORK}" --subnet-mode=custom
+            <div class="step-heading"><span class="step-number">5</span><h2>Set up private networking and restricted ingress</h2></div>
+            <p>This example creates a custom VPC, private subnet, and Cloud NAT. The VM has no public IP but can pull public images and reach model providers. Only the gateway's CIDR may access TAP on <code>8080/tcp</code>.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud compute networks create "${NETWORK}" --subnet-mode=custom
 
 gcloud compute networks subnets create "${SUBNET}" \
   --network="${NETWORK}" \
@@ -161,13 +165,13 @@ gcloud compute firewall-rules create tap-from-internal \
   --rules=tcp:8080 \
   --source-ranges="${INTERNAL_CALLER_CIDR}" \
   --target-tags=tap</code></pre></div>
-            <p>如果中转站位于另一个 VPC，需要先配置 VPC Peering、VPN 或其他私网连接，再把 <code>INTERNAL_CALLER_CIDR</code> 缩小到真实调用方范围。不要创建 <code>0.0.0.0/0 → tcp:8080</code> 规则。</p>
+            <p>If the gateway is in another VPC, configure VPC Peering, a VPN, or another private connection first. Restrict <code>INTERNAL_CALLER_CIDR</code> to the actual callers. Do not create a <code>0.0.0.0/0 → tcp:8080</code> rule.</p>
           </section>
 
           <section id="secrets">
-            <div class="step-heading"><span class="step-number">6</span><h2>准备固定版本的 Secret</h2></div>
-            <p>单副本测试可以不配置 PostgreSQL。多副本生产环境把完整 PostgreSQL DSN 放入 Secret Manager，并只传固定编号的资源名。程序会自动创建或迁移 proof 相关表。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud secrets create tap-pg-dsn --replication-policy=automatic
+            <div class="step-heading"><span class="step-number">6</span><h2>Prepare secrets with fixed versions</h2></div>
+            <p>Single-replica tests can run without PostgreSQL. For production with multiple replicas, store the full PostgreSQL DSN in Secret Manager and pass only a resource name with a fixed numeric version. The service creates or migrates proof-related tables automatically.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud secrets create tap-pg-dsn --replication-policy=automatic
 
 printf '%s' 'postgres://tap:PASSWORD@postgres.internal:5432/tap?sslmode=verify-full' \
   | gcloud secrets versions add tap-pg-dsn --data-file=-
@@ -178,17 +182,17 @@ gcloud secrets add-iam-policy-binding tap-pg-dsn \
 
 export PG_SECRET_VERSION="projects/${PROJECT_ID}/secrets/tap-pg-dsn/versions/1"</code></pre></div>
             <ul>
-              <li>禁止使用 <code>versions/latest</code>；</li>
-              <li>不要把 DSN、密码、CA 私钥放进 Git、镜像、命令行参数或实例 metadata；</li>
-              <li>数据库应启用 TLS 校验并限制网络来源；</li>
-              <li>当前程序只直接从 Secret Manager 读取 PostgreSQL DSN；生产 MITM CA 仍需要先实现独立的受控 bootstrap。</li>
+              <li>Do not use <code>versions/latest</code>;</li>
+              <li>Keep DSNs, passwords, and CA private keys out of Git, images, command-line arguments, and instance metadata;</li>
+              <li>Enable database TLS verification and restrict network sources;</li>
+              <li>The service currently reads only the PostgreSQL DSN directly from Secret Manager. A separate, controlled bootstrap must still be implemented for the production MITM CA.</li>
             </ul>
           </section>
 
           <section id="test">
-            <div class="step-heading"><span class="step-number">7</span><h2>创建 debug 测试实例</h2></div>
-            <p>只使用假数据和演示 CA。Debug 镜像允许 SSH/root 访问，<code>dbgstat</code> 为 <code>enabled</code>，不能被生产客户策略接受。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud compute instances create "${INSTANCE_NAME}-debug" \
+            <div class="step-heading"><span class="step-number">7</span><h2>Create a debug test instance</h2></div>
+            <p>Use only synthetic data and the demonstration CA. Debug images allow SSH/root access;<code>dbgstat</code> is <code>enabled</code>, which production customer policies must reject.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud compute instances create "${INSTANCE_NAME}-debug" \
   --project="${PROJECT_ID}" \
   --zone="${ZONE}" \
   --machine-type="${MACHINE_TYPE}" \
@@ -204,16 +208,16 @@ export PG_SECRET_VERSION="projects/${PROJECT_ID}/secrets/tap-pg-dsn/versions/1"<
   --scopes=cloud-platform \
   --tags=tap \
   --metadata="^~^tee-image-reference=${IMAGE}~tee-restart-policy=OnFailure~tee-container-log-redirect=true"</code></pre></div>
-            <p>检查启动日志与内部 IP：</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud compute instances get-serial-port-output "${INSTANCE_NAME}-debug" \
+            <p>Inspect startup logs and the internal IP:</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud compute instances get-serial-port-output "${INSTANCE_NAME}-debug" \
   --zone="${ZONE}" --port=1
 
 export TAP_INTERNAL_IP="$(gcloud compute instances describe "${INSTANCE_NAME}-debug" \
   --zone="${ZONE}" --format='get(networkInterfaces[0].networkIP)')"
 
 echo "TAP internal address: http://${TAP_INTERNAL_IP}:8080"</code></pre></div>
-            <p>从允许的内部调用主机检查元数据端点：</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>curl --fail --silent --show-error \
+            <p>Check the metadata endpoints from an allowed internal host:</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>curl --fail --silent --show-error \
   "http://${TAP_INTERNAL_IP}:8080/.well-known/http-attestation-key"
 
 NONCE="$(openssl rand -hex 16)"
@@ -222,9 +226,9 @@ curl --fail --silent --show-error \
           </section>
 
           <section id="production">
-            <div class="step-heading"><span class="step-number">8</span><h2>创建生产实例</h2></div>
-            <p>生产环境仍需使用稳定、受控配置的 MITM CA 和签名密钥，并确保容器不会记录消息正文、query、凭据、token 或 DSN；若生产密钥方案改变镜像内容，应同步更新固定 digest 和客户策略。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>gcloud compute instances create "${INSTANCE_NAME}" \
+            <div class="step-heading"><span class="step-number">8</span><h2>Create a production instance</h2></div>
+            <p>Production requires a stable, securely provisioned MITM CA. Ed25519 signing keys are generated in memory for each process and bound to startup attestation. Ensure the container never logs message bodies, queries, credentials, tokens, or DSNs. If CA provisioning changes the image, update its pinned digest and the customer policy together.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>gcloud compute instances create "${INSTANCE_NAME}" \
   --project="${PROJECT_ID}" \
   --zone="${ZONE}" \
   --machine-type="${MACHINE_TYPE}" \
@@ -240,59 +244,59 @@ curl --fail --silent --show-error \
   --scopes=cloud-platform \
   --tags=tap \
   --metadata="^~^tee-image-reference=${IMAGE}~tee-restart-policy=OnFailure~tee-env-TAP_PG_DSN_SECRET_VERSION=${PG_SECRET_VERSION}"</code></pre></div>
-            <div class="callout"><span class="callout-icon">i</span><div><strong>单副本且不使用 PostgreSQL</strong><p>从 metadata 中删除 <code>tee-env-TAP_PG_DSN_SECRET_VERSION=…</code>。客户验证器要使用 <code>--without-postgres</code>，并理解无法跨副本路由新 challenge。</p></div></div>
-            <p>生产 Confidential Space 镜像禁用 SSH。通过最小化的启动日志、内部健康探测和客户 proof 验证进行运维，不要为了调试把生产实例改回 debug 镜像。</p>
+            <div class="callout"><span class="callout-icon">i</span><div><strong>Single replica without PostgreSQL</strong><p>Remove <code>tee-env-TAP_PG_DSN_SECRET_VERSION=…</code> from metadata. The customer verifier must use <code>--without-postgres</code> and account for the lack of cross-replica routing for new challenges.</p></div></div>
+            <p>Production Confidential Space images disable SSH. Use minimal startup logs, internal health checks, and customer proof verification for operations. Do not switch a production instance back to a debug image for troubleshooting.</p>
           </section>
 
           <section id="gateway">
-            <div class="step-heading"><span class="step-number">9</span><h2>让中转站使用 TAP</h2></div>
-            <p>在 New API / One API 等中转服务进程中配置代理，并将生产 Intermediate CA 证书加入该进程的系统或应用 trust store。CA 只给内部中转服务信任，绝不能交给最终用户安装。</p>
-            <div class="code-block"><button class="copy-button" type="button">复制</button><pre><code>export HTTP_PROXY="http://${TAP_INTERNAL_IP}:8080"
+            <div class="step-heading"><span class="step-number">9</span><h2>Configure your gateway to use TAP</h2></div>
+            <p>Configure the proxy in the New API / One API gateway process and add the production Intermediate CA certificate to its system or application trust store. Only the internal gateway should trust this CA; end users must never be asked to install it.</p>
+            <div class="code-block"><button class="copy-button" type="button">Copy</button><pre><code>export HTTP_PROXY="http://${TAP_INTERNAL_IP}:8080"
 export HTTPS_PROXY="http://${TAP_INTERNAL_IP}:8080"
 export NO_PROXY="127.0.0.1,localhost,metadata.google.internal"
 
-# 按中转服务运行时的要求导入生产 Intermediate CA。
-# 不要关闭 TLS 校验，也不要使用 InsecureSkipVerify。</code></pre></div>
-            <p>确认中转站原样返回所有 <code>X-Attestation-*</code> headers。代理会主动清除上游伪造或陈旧的同名 headers，只有本地成功证明后才添加新值。</p>
+# Import the production Intermediate CA as required by the gateway runtime.
+# Do not disable TLS verification or use InsecureSkipVerify.</code></pre></div>
+            <p>Confirm that the gateway returns all <code>X-Attestation-*</code> headers unchanged. The proxy clears forged or stale upstream headers with these names and adds new values only after successfully generating a local attestation.</p>
           </section>
 
           <section id="acceptance">
-            <div class="step-heading"><span class="step-number">10</span><h2>生产验收清单</h2></div>
+            <div class="step-heading"><span class="step-number">10</span><h2>Production acceptance checklist</h2></div>
             <table class="check-table">
-              <thead><tr><th>检查项</th><th>通过标准</th></tr></thead>
+              <thead><tr><th>Check</th><th>Acceptance criteria</th></tr></thead>
               <tbody>
-                <tr><td>镜像</td><td>部署使用 <code>@sha256:…</code>，且 digest 与客户批准值完全一致。</td></tr>
-                <tr><td>运行环境</td><td>Google token 中 <code>swname=CONFIDENTIAL_SPACE</code>、<code>dbgstat=disabled-since-boot</code>、<code>secboot=true</code>，并满足硬件与 STABLE/LATEST 策略。</td></tr>
-                <tr><td>密钥材料</td><td>镜像、Git、metadata 和日志中没有生产 CA 私钥、签名私钥、DSN 或凭据。</td></tr>
-                <tr><td>网络</td><td>实例无公网入口；8080 只允许中转站私网 CIDR；出站 TLS 正常校验。</td></tr>
-                <tr><td>非流式签名</td><td>受支持的纯文本请求返回 <code>llm-conversation-text-v1</code>，参考客户端可验签。</td></tr>
-                <tr><td>失败关闭</td><td>超限、歧义、多模态或不支持内容正常透传但不带本地证明 headers。</td></tr>
-                <tr><td>流式边界</td><td>带合法 challenge 的 SSE 只返回 <code>llm-request-upstream-v1</code>；产品 UI 明确标记 body 未证明。</td></tr>
-                <tr><td>多副本</td><td>proof_ref 能路由到 owner；owner 下线、未知引用和超时分别返回预期状态。</td></tr>
+                <tr><td>Image</td><td>Deploy with <code>@sha256:…</code> and a digest that exactly matches the customer-approved value.</td></tr>
+                <tr><td>Runtime</td><td>The Google token must contain <code>swname=CONFIDENTIAL_SPACE</code>, <code>dbgstat=disabled-since-boot</code>, <code>secboot=true</code> and satisfy hardware and STABLE/LATEST policies.</td></tr>
+                <tr><td>Key material</td><td>No production CA private keys, signing private keys, DSNs, or credentials in images, Git, metadata, or logs.</td></tr>
+                <tr><td>Network</td><td>No public ingress; port 8080 accepts only the gateway's private CIDR; outbound TLS verification remains enabled.</td></tr>
+                <tr><td>Non-streaming signatures</td><td>Supported plain-text requests return <code>llm-conversation-text-v1</code> and verify with the reference client.</td></tr>
+                <tr><td>Fail closed</td><td>Oversized, ambiguous, multimodal, or unsupported content is forwarded without locally generated attestation headers.</td></tr>
+                <tr><td>Streaming boundary</td><td>SSE with a valid challenge returns only <code>llm-request-upstream-v1</code>; the product UI explicitly marks the body as unverified.</td></tr>
+                <tr><td>Multiple replicas</td><td>proof_ref routes to its owner; offline owners, unknown references, and timeouts return the expected statuses.</td></tr>
               </tbody>
             </table>
-            <p>最后，把 issuer、audience、镜像 digest、project ID/number、zone、实例允许列表、服务账号、硬件类型、允许域名/path/model 与 Secret 固定版本通过可信带外渠道交付客户。不要让客户从待验证响应中学习这些期望值。</p>
+            <p>Finally, deliver the issuer, audience, image digest, project ID/number, zone, instance allowlist, service account, hardware type, allowed domains/paths/models, and fixed secret version through a trusted out-of-band channel. Customers must not learn these expected values from the response they are trying to verify.</p>
           </section>
 
           <section id="troubleshooting">
-            <h2>故障排查</h2>
+            <h2>Troubleshooting</h2>
             <table class="check-table">
-              <thead><tr><th>现象</th><th>优先检查</th></tr></thead>
+              <thead><tr><th>Symptom</th><th>Check first</th></tr></thead>
               <tbody>
-                <tr><td>容器未启动</td><td>GHCR package 是否公开、digest 是否存在、Cloud NAT/DNS 是否可用、镜像架构是否为 linux/amd64。</td></tr>
-                <tr><td>证明端点 503</td><td>服务账号是否有 <code>roles/confidentialcomputing.workloadUser</code>，launcher socket 是否可访问，audience/nonce 是否合规。</td></tr>
-                <tr><td>没有证明 headers</td><td>请求 path、Content-Type、body 大小、文本提取器、上游 TLS、stream/challenge 是否满足 profile。</td></tr>
-                <tr><td>中转请求 TLS 失败</td><td>中转进程是否信任正确的内部 CA，是否误用旧 CA；不要禁用证书校验。</td></tr>
-                <tr><td>proof_ref 查询 404/410/503</td><td>404=未知引用；410=owner 不在线；503=跨副本签发超时或临时失败。检查 PostgreSQL 与 owner 心跳。</td></tr>
-                <tr><td>客户验签失败</td><td>中转层是否修改了模型、路径、角色、顺序、消息边界或文本；是否丢失/合并了 headers；nonce 是否已消费。</td></tr>
+                <tr><td>Container does not start</td><td>Is the GHCR package public? Does the digest exist? Are Cloud NAT and DNS working? Is the image built for linux/amd64?</td></tr>
+                <tr><td>Proof endpoint returns 503</td><td>Does the service account have <code>roles/confidentialcomputing.workloadUser</code>? Is the launcher socket accessible? Are the audience and nonce valid?</td></tr>
+                <tr><td>Missing attestation headers</td><td>Check the request path, Content-Type, body size, text extractor, upstream TLS, and stream/challenge requirements for the profile.</td></tr>
+                <tr><td>Gateway request fails TLS</td><td>Confirm that the gateway process trusts the correct internal CA, rather than an old CA. Do not disable certificate verification.</td></tr>
+                <tr><td>proof_ref lookup returns 404/410/503</td><td>404 = unknown reference; 410 = owner offline; 503 = cross-replica issuance timeout or temporary failure. Check PostgreSQL and owner heartbeats.</td></tr>
+                <tr><td>Customer verification fails</td><td>Has the gateway changed the model, path, roles, order, message boundaries, or text? Were headers dropped or merged? Has the nonce already been consumed?</td></tr>
               </tbody>
             </table>
-            <div class="doc-next"><div><strong>下一步：把验证能力交付给最终用户</strong><span>用户不需要代理地址和内部 CA，只需要带外策略、证明包与业务响应。</span></div><a class="button button-primary" href="user-guide.html">用户使用指南</a></div>
+            <div class="doc-next"><div><strong>Next: give customers independent verification</strong><span>Customers need out-of-band policy, proof bundles, and API responses, rather than a proxy address or internal CA.</span></div><a class="button button-primary" href="user-guide.html">User guide</a></div>
           </section>
         </article>
       </div>
     </main>
 
-    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 TokenEvol Inc.</span><span><a href="index.html">返回首页</a> · <a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></span></div></footer>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 TokenEvol Inc.</span><span><a href="index.html">Back to home</a> · <a href="https://github.com/tokenevol/TrustedAIProxy">GitHub</a></span></div></footer>
   </body>
 </html>
